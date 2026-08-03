@@ -18,20 +18,51 @@ export function loadPracticeState(
       return initialPracticeState();
     }
 
-    const parsed: unknown = JSON.parse(stored);
-    if (!isPracticeStateDocument(parsed)) {
-      return initialPracticeState();
-    }
-
-    const questionsById = new Map(
-      questions.map((question) => [question.id, question]),
-    );
-    const attempts = normalizeAttempts(parsed.attempts, questionsById);
-
-    return attempts.reduce(recordAttempt, initialPracticeState());
+    return hydratePracticeStateDocument(JSON.parse(stored), questions);
   } catch {
     return initialPracticeState();
   }
+}
+
+export function hydratePracticeStateDocument(
+  value: unknown,
+  questions: readonly QuestionMeta[],
+): PracticeState {
+  if (!isPracticeStateDocument(value)) {
+    return initialPracticeState();
+  }
+
+  const questionsById = new Map(
+    questions.map((question) => [question.id, question]),
+  );
+  const attempts = normalizeAttempts(value.attempts, questionsById);
+
+  return attempts.reduce(recordAttempt, initialPracticeState());
+}
+
+export function mergePracticeStates(
+  ...states: readonly PracticeState[]
+): PracticeState {
+  const attempts: Attempt[] = [];
+  const seenIds = new Set<string>();
+
+  for (const state of states) {
+    for (const attempt of state.attempts) {
+      if (seenIds.has(attempt.id)) {
+        continue;
+      }
+
+      seenIds.add(attempt.id);
+      attempts.push(attempt);
+    }
+  }
+
+  attempts.sort((left, right) => {
+    const timeDifference = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+    return timeDifference || left.id.localeCompare(right.id);
+  });
+
+  return attempts.reduce(recordAttempt, initialPracticeState());
 }
 
 export function savePracticeState(

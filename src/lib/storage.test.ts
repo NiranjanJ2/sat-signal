@@ -3,7 +3,9 @@ import type { QuestionMeta } from "../types";
 import { initialPracticeState } from "./practice";
 import {
   PRACTICE_STORAGE_KEY,
+  hydratePracticeStateDocument,
   loadPracticeState,
+  mergePracticeStates,
   savePracticeState,
   type StorageLike,
 } from "./storage";
@@ -128,6 +130,89 @@ describe("loadPracticeState", () => {
 
     expect(loadPracticeState(throwing, catalog)).toEqual(initialPracticeState());
     expect(savePracticeState(throwing, initialPracticeState())).toBe(false);
+  });
+});
+
+describe("hydratePracticeStateDocument", () => {
+  it("validates a raw server document against the live catalog", () => {
+    expect(
+      hydratePracticeStateDocument(
+        {
+          version: 2,
+          attempts: [
+            {
+              id: "server-attempt",
+              questionId: "external-q-1",
+              response: "12",
+              correct: false,
+              createdAt: "2026-08-03T00:00:00.000Z",
+            },
+            {
+              id: "orphan",
+              questionId: "removed-question",
+              response: "A",
+              correct: true,
+              createdAt: "2026-08-03T00:01:00.000Z",
+            },
+          ],
+        },
+        catalog,
+      ),
+    ).toMatchObject({
+      attempts: [{ id: "server-attempt" }],
+      unresolvedIds: ["external-q-1"],
+    });
+  });
+});
+
+describe("mergePracticeStates", () => {
+  it("unions browser and JSON attempts chronologically then rebuilds miss memory", () => {
+    const remote = hydratePracticeStateDocument(
+      {
+        version: 2,
+        attempts: [
+          {
+            id: "remote-miss",
+            questionId: "external-q-1",
+            response: "B",
+            correct: false,
+            createdAt: "2026-08-03T00:00:00.000Z",
+          },
+        ],
+      },
+      catalog,
+    );
+    const browser = hydratePracticeStateDocument(
+      {
+        version: 2,
+        attempts: [
+          {
+            id: "browser-resolution",
+            questionId: "external-q-1",
+            response: "C",
+            correct: true,
+            createdAt: "2026-08-03T00:02:00.000Z",
+          },
+          {
+            id: "remote-miss",
+            questionId: "external-q-1",
+            response: "forged duplicate",
+            correct: true,
+            createdAt: "2026-08-03T00:03:00.000Z",
+          },
+        ],
+      },
+      catalog,
+    );
+
+    expect(mergePracticeStates(remote, browser)).toMatchObject({
+      attempts: [
+        { id: "remote-miss", correct: false },
+        { id: "browser-resolution", correct: true },
+      ],
+      unresolvedIds: [],
+      missedHistoryIds: ["external-q-1"],
+    });
   });
 });
 

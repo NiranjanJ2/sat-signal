@@ -21,6 +21,9 @@ export function filterQuestions(
   state: PracticeState,
 ): QuestionMeta[] {
   const unresolvedIds = new Set(state.unresolvedIds);
+  const attemptedIds = new Set(
+    state.attempts.map(({ questionId }) => questionId),
+  );
 
   return questions.filter((question) => {
     return (
@@ -29,7 +32,9 @@ export function filterQuestions(
       (filters.skill === "All" || question.skill === filters.skill) &&
       (filters.difficulty === "All" ||
         question.difficulty === filters.difficulty) &&
-      (filters.mode === "all" || unresolvedIds.has(question.id))
+      (filters.mode === "all"
+        ? !attemptedIds.has(question.id)
+        : unresolvedIds.has(question.id))
     );
   });
 }

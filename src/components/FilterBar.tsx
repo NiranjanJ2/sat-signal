@@ -109,7 +109,7 @@ export function FilterBar({
             aria-pressed={filters.mode === "all"}
             onClick={() => onChange({ ...filters, mode: "all" })}
           >
-            All questions
+            New questions
           </button>
           <button
             type="button"

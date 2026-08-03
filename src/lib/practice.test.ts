@@ -74,6 +74,25 @@ describe("filterQuestions", () => {
     ).toEqual(["external-q-2"]);
   });
 
+  it("shows only never-attempted questions in the default queue", () => {
+    expect(
+      filterQuestions(catalog, filters, {
+        ...emptyState,
+        attempts: [
+          attempt(),
+          attempt({
+            id: "attempt-2",
+            questionId: "external-q-2",
+            response: "B",
+            correct: true,
+          }),
+        ],
+        unresolvedIds: ["external-q-1"],
+        missedHistoryIds: ["external-q-1"],
+      }).map(({ id }) => id),
+    ).toEqual(["external-q-3"]);
+  });
+
   it("shows only unresolved catalog ids in missed mode", () => {
     expect(
       filterQuestions(catalog, { ...filters, mode: "missed" }, {
@@ -133,4 +152,3 @@ describe("deriveTopicStats", () => {
     ]);
   });
 });
-

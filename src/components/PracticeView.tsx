@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { gradeResponse } from "../lib/qbank";
-import type { QuestionDetail, QuestionMeta, TopicStat } from "../types";
+import type { Filters, QuestionDetail, QuestionMeta, TopicStat } from "../types";
 import { CoachPanel } from "./CoachPanel";
 import { MemoryTrace } from "./MemoryTrace";
 import { RichHtml } from "./RichHtml";
@@ -18,6 +18,7 @@ type PracticeViewProps = {
   stats: readonly TopicStat[];
   unresolvedCount: number;
   attemptedCount: number;
+  queueMode: Filters["mode"];
   focusQuestion: boolean;
   onSubmit: (response: string) => boolean;
   onNext: () => void;
@@ -40,6 +41,7 @@ export function PracticeView({
   stats,
   unresolvedCount,
   attemptedCount,
+  queueMode,
   focusQuestion,
   onSubmit,
   onNext,
@@ -59,14 +61,23 @@ export function PracticeView({
   }, [detailState.status, focusQuestion]);
 
   if (!currentMeta) {
+    const retryMode = queueMode === "missed";
     return (
       <section className="empty-state" aria-labelledby="empty-pool-title">
         <div className="empty-mark" aria-hidden="true">✓</div>
         <p className="section-index">No question waiting</p>
-        <h1 id="empty-pool-title">The retry queue is clear.</h1>
-        <p>You have resolved every miss in this filter. Return to the full bank to build another signal.</p>
+        <h1 id="empty-pool-title">
+          {retryMode
+            ? "The retry queue is clear."
+            : "You have seen every question in this filter."}
+        </h1>
+        <p>
+          {retryMode
+            ? "You have resolved every miss in this filter. Return to the unseen bank to build another signal."
+            : "Change the filters, practice unresolved misses, or reset progress to start the bank over."}
+        </p>
         <button className="button button-primary" type="button" onClick={onPracticeAll}>
-          Practice all questions
+          Practice new questions
         </button>
       </section>
     );

@@ -13,6 +13,11 @@ const coachMocks = vi.hoisted(() => ({
   requestCoachSummary: vi.fn(),
 }));
 
+const progressMocks = vi.hoisted(() => ({
+  loadProgressDocument: vi.fn(),
+  saveProgressDocument: vi.fn(),
+}));
+
 vi.mock("./lib/qbank", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/qbank")>();
   return {
@@ -27,6 +32,8 @@ vi.mock("./lib/coach", () => ({
     `Local summary for ${question.skill}`,
   requestCoachSummary: coachMocks.requestCoachSummary,
 }));
+
+vi.mock("./lib/progress", () => progressMocks);
 
 const catalog: QuestionMeta[] = [
   {
@@ -91,6 +98,13 @@ describe("SAT practice app", () => {
     qbankMocks.loadCatalog.mockReset();
     qbankMocks.fetchQuestionDetail.mockReset();
     coachMocks.requestCoachSummary.mockReset();
+    progressMocks.loadProgressDocument.mockReset();
+    progressMocks.saveProgressDocument.mockReset();
+    progressMocks.loadProgressDocument.mockResolvedValue({
+      available: true,
+      document: { version: 2, attempts: [] },
+    });
+    progressMocks.saveProgressDocument.mockResolvedValue(true);
   });
 
   it("loads the current question, prefetches one lookahead, and advances from memory", async () => {
@@ -293,12 +307,51 @@ describe("SAT practice app", () => {
     );
 
     render(<App />);
-    await screen.findByRole("heading", { name: /which choice best states/i });
+    await screen.findByRole("heading", { name: /what is the value of x/i });
     fireEvent.click(screen.getByRole("button", { name: /^memory$/i }));
 
     const row = screen.getByTestId("topic-Information and Ideas");
     expect(within(row).getByText(/1 attempt/i)).toBeVisible();
     expect(within(row).getByText(/100%/i)).toBeVisible();
+  });
+
+  it("hydrates durable JSON progress and skips every attempted question", async () => {
+    prepareSuccess();
+    progressMocks.loadProgressDocument.mockResolvedValue({
+      available: true,
+      document: {
+        version: 2,
+        attempts: [
+          {
+            id: "server-attempt",
+            questionId: "rw-1",
+            response: "B",
+            correct: false,
+            createdAt: "2026-08-03T12:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: /what is the value of x/i }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: /which choice best states/i }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^memory$/i }));
+    const row = screen.getByTestId("topic-Information and Ideas");
+    expect(within(row).getByText(/1 attempt/i)).toBeVisible();
+    expect(within(row).getByText(/0%/i)).toBeVisible();
+    await waitFor(() =>
+      expect(progressMocks.saveProgressDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attempts: [expect.objectContaining({ id: "server-attempt" })],
+        }),
+      ),
+    );
   });
 
   it("keeps stale question details from replacing the current question", async () => {
@@ -355,6 +408,6 @@ describe("SAT practice app", () => {
     fireEvent.click(screen.getByRole("button", { name: /practice misses/i }));
 
     expect(screen.getByRole("heading", { name: /retry queue is clear/i })).toBeVisible();
-    expect(screen.getByRole("button", { name: /practice all questions/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /practice new questions/i })).toBeVisible();
   });
 });

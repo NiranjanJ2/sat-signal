@@ -1,6 +1,11 @@
 import express from "express";
 import type { CoachApiPayload } from "../src/lib/coach-contract";
 import { generateCoachSummary } from "./coach";
+import {
+  DEFAULT_PROGRESS_FILE,
+  InvalidProgressDocumentError,
+  ProgressStore,
+} from "./progress";
 
 const isNonemptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0;
@@ -26,11 +31,45 @@ const isCoachPayload = (value: unknown): value is CoachApiPayload => {
 
 export function createApiApp(
   generateCoach: typeof generateCoachSummary = generateCoachSummary,
+  progressFile = DEFAULT_PROGRESS_FILE,
 ) {
   const app = express();
+  const progress = new ProgressStore(progressFile);
 
   app.disable("x-powered-by");
+  app.use("/api/progress", express.json({ limit: "2mb" }));
   app.use(express.json({ limit: "32kb" }));
+  app.get("/api/progress", async (_request, response) => {
+    try {
+      response.json(await progress.read());
+    } catch (error) {
+      const message =
+        error instanceof InvalidProgressDocumentError
+          ? "Stored progress is unreadable."
+          : "Progress storage is unavailable.";
+      response.status(500).json({ error: message });
+    }
+  });
+  app.put("/api/progress", async (request, response) => {
+    try {
+      await progress.write(request.body);
+      response.status(204).end();
+    } catch (error) {
+      if (
+        error instanceof InvalidProgressDocumentError &&
+        error.source === "input"
+      ) {
+        response.status(400).json({ error: "Invalid progress document." });
+        return;
+      }
+
+      const message =
+        error instanceof InvalidProgressDocumentError
+          ? "Stored progress is unreadable."
+          : "Progress storage is unavailable.";
+      response.status(500).json({ error: message });
+    }
+  });
   app.post("/api/explain", async (request, response) => {
     if (!isCoachPayload(request.body)) {
       response.status(400).json({ error: "Invalid coach request." });

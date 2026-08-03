@@ -14,8 +14,11 @@ import {
   initialPracticeState,
   recordAttempt,
 } from "./lib/practice";
+import { loadProgressDocument, saveProgressDocument } from "./lib/progress";
 import {
+  hydratePracticeStateDocument,
   loadPracticeState,
+  mergePracticeStates,
   savePracticeState,
   type StorageLike,
 } from "./lib/storage";
@@ -144,6 +147,8 @@ export default function App() {
   const detailVersionRef = useRef(0);
   const detailCacheRef = useRef(new Map<string, QuestionDetail>());
   const detailRequestsRef = useRef(new Map<string, DetailRequest>());
+  const progressWritableRef = useRef(false);
+  const progressSaveRef = useRef<Promise<void>>(Promise.resolve());
 
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
   const [catalog, setCatalog] = useState<QuestionMeta[]>([]);
@@ -164,6 +169,19 @@ export default function App() {
       request.controller.abort();
     }
     detailRequestsRef.current.clear();
+  }, []);
+
+  const persistPracticeState = useCallback((state: PracticeState) => {
+    savePracticeState(storageRef.current, state);
+    if (!progressWritableRef.current) {
+      return;
+    }
+
+    progressSaveRef.current = progressSaveRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        await saveProgressDocument(state);
+      });
   }, []);
 
   const requestQuestionDetail = useCallback((meta: QuestionMeta) => {
@@ -205,17 +223,36 @@ export default function App() {
     const version = catalogVersionRef.current + 1;
     catalogVersionRef.current = version;
     catalogControllerRef.current = controller;
+    progressWritableRef.current = false;
     setCatalogStatus("loading");
 
-    void loadCatalog(controller.signal)
-      .then((nextCatalog) => {
+    void Promise.all([
+      loadCatalog(controller.signal),
+      loadProgressDocument(controller.signal),
+    ])
+      .then(([nextCatalog, progressResult]) => {
         if (controller.signal.aborted || catalogVersionRef.current !== version) {
           return;
         }
 
+        const browserState = loadPracticeState(storageRef.current, nextCatalog);
+        const nextPracticeState = progressResult.available
+          ? mergePracticeStates(
+              hydratePracticeStateDocument(progressResult.document, nextCatalog),
+              browserState,
+            )
+          : browserState;
+        const nextPool = filterQuestions(
+          nextCatalog,
+          DEFAULT_FILTERS,
+          nextPracticeState,
+        );
+
+        progressWritableRef.current = progressResult.available;
         setCatalog(nextCatalog);
-        setPracticeState(loadPracticeState(storageRef.current, nextCatalog));
-        setCurrentQuestionId(nextCatalog[0]?.id ?? null);
+        setPracticeState(nextPracticeState);
+        persistPracticeState(nextPracticeState);
+        setCurrentQuestionId(nextPool[0]?.id ?? null);
         setQuestionEpoch((epoch) => epoch + 1);
         setCatalogStatus("ready");
       })
@@ -224,7 +261,7 @@ export default function App() {
           setCatalogStatus("error");
         }
       });
-  }, [abortAllDetailRequests]);
+  }, [abortAllDetailRequests, persistPracticeState]);
 
   useEffect(() => {
     startCatalogLoad();
@@ -408,7 +445,7 @@ export default function App() {
     };
     const nextState = recordAttempt(practiceState, attempt);
     setPracticeState(nextState);
-    savePracticeState(storageRef.current, nextState);
+    persistPracticeState(nextState);
     return correct;
   };
 
@@ -419,7 +456,7 @@ export default function App() {
   const confirmReset = () => {
     const nextState = initialPracticeState();
     setPracticeState(nextState);
-    savePracticeState(storageRef.current, nextState);
+    persistPracticeState(nextState);
     setResetOpen(false);
     setView("practice");
     setFilters(DEFAULT_FILTERS);
@@ -468,7 +505,7 @@ export default function App() {
             <span className="loading-pulse" aria-hidden="true" />
             <p className="section-index">Connecting to the live bank</p>
             <h1>Loading released SAT questions…</h1>
-            <p>Fetching the current College Board catalog. Your saved progress stays in this browser.</p>
+            <p>Fetching the current College Board catalog. Your saved progress stays on this device.</p>
           </section>
         ) : null}
 
@@ -510,6 +547,7 @@ export default function App() {
               stats={stats}
               unresolvedCount={practiceState.unresolvedIds.length}
               attemptedCount={practiceState.attempts.length}
+              queueMode={filters.mode}
               focusQuestion={questionEpoch > 1}
               onSubmit={submitAnswer}
               onNext={nextQuestion}
@@ -590,7 +628,7 @@ export default function App() {
           <section className="reset-dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" aria-describedby="reset-description">
             <p className="section-index">Reset progress</p>
             <h2 id="reset-title">Erase this memory trace?</h2>
-            <p id="reset-description">This permanently clears attempts, unresolved misses, and miss history stored in this browser.</p>
+            <p id="reset-description">This permanently clears attempts, unresolved misses, and miss history stored on this device.</p>
             <div className="dialog-actions">
               <button className="button button-quiet" type="button" ref={resetCancelRef} onClick={() => setResetOpen(false)}>
                 Keep progress

@@ -84,7 +84,7 @@ export function ReviewView({
           </button>
         ) : (
           <button className="button button-quiet" type="button" onClick={onPracticeAll}>
-            Practice all questions
+            Practice new questions
           </button>
         )}
       </header>
