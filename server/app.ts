@@ -1,5 +1,5 @@
 import express from "express";
-import type { CoachApiPayload } from "../src/lib/coach";
+import type { CoachApiPayload } from "../src/lib/coach-contract";
 import { generateCoachSummary } from "./coach";
 
 const isNonemptyString = (value: unknown): value is string =>

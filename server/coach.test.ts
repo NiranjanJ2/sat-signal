@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CoachApiPayload } from "../src/lib/coach";
+import type { CoachApiPayload } from "../src/lib/coach-contract";
 import { generateCoachSummary } from "./coach";
 
 const payload: CoachApiPayload = {

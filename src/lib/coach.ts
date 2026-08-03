@@ -1,18 +1,12 @@
 import { htmlToPlainText } from "../components/RichHtml";
 import type { QuestionChoice, QuestionDetail } from "../types";
+import type { CoachApiPayload } from "./coach-contract";
+
+export type { CoachApiPayload } from "./coach-contract";
 
 export type CoachRequest = {
   question: QuestionDetail;
   response: string;
-};
-
-export type CoachApiPayload = {
-  question: string;
-  choices: readonly string[];
-  selectedAnswer: string;
-  correctAnswers: readonly string[];
-  topic: string;
-  rationale: string;
 };
 
 type CoachApiResult =

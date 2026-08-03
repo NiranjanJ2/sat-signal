@@ -1,4 +1,4 @@
-import type { CoachApiPayload } from "../src/lib/coach";
+import type { CoachApiPayload } from "../src/lib/coach-contract";
 
 export type CoachGenerationResult =
   | { available: false }
