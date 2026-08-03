@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FilterBar } from "./components/FilterBar";
 import { MemoryTrace } from "./components/MemoryTrace";
 import { PracticeView } from "./components/PracticeView";
 import { ReviewView } from "./components/ReviewView";
-import { questions } from "./data/questions";
+import {
+  fetchQuestionDetail,
+  gradeResponse,
+  loadCatalog,
+} from "./lib/qbank";
 import {
   deriveTopicStats,
   filterQuestions,
@@ -19,18 +23,19 @@ import type {
   Attempt,
   Filters,
   PracticeState,
-  Question,
+  QuestionDetail,
+  QuestionMeta,
   ViewMode,
 } from "./types";
 
 const DEFAULT_FILTERS: Filters = {
   subject: "All",
   domain: "All",
+  skill: "All",
   difficulty: "All",
   mode: "all",
 };
 
-const questionById = new Map(questions.map((question) => [question.id, question]));
 const memoryFallback = new Map<string, string>();
 const memoryStorage: StorageLike = {
   getItem: (key) => memoryFallback.get(key) ?? null,
@@ -38,6 +43,13 @@ const memoryStorage: StorageLike = {
     memoryFallback.set(key, value);
   },
 };
+
+type CatalogStatus = "loading" | "ready" | "error";
+type DetailState =
+  | { status: "idle" }
+  | { status: "loading"; questionId: string }
+  | { status: "error"; questionId: string }
+  | { status: "ready"; questionId: string; question: QuestionDetail };
 
 let attemptSequence = 0;
 
@@ -53,6 +65,12 @@ const nextAttemptId = (questionId: string): string => {
   attemptSequence += 1;
   return `${questionId}-${Date.now()}-${attemptSequence}`;
 };
+
+const isAbortError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "name" in error &&
+  error.name === "AbortError";
 
 const countStreak = (attempts: readonly Attempt[]): number => {
   const days = new Set(
@@ -81,35 +99,118 @@ const countStreak = (attempts: readonly Attempt[]): number => {
 };
 
 export default function App() {
-  const storageRef = useRef<StorageLike | null>(null);
-  if (storageRef.current === null) {
-    storageRef.current = resolveStorage();
-  }
+  const storageRef = useRef<StorageLike>(resolveStorage());
+  const catalogControllerRef = useRef<AbortController | null>(null);
+  const catalogVersionRef = useRef(0);
+  const detailControllerRef = useRef<AbortController | null>(null);
+  const detailVersionRef = useRef(0);
 
-  const [practiceState, setPracticeState] = useState<PracticeState>(() =>
-    loadPracticeState(storageRef.current ?? memoryStorage, questions),
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
+  const [catalog, setCatalog] = useState<QuestionMeta[]>([]);
+  const [practiceState, setPracticeState] = useState<PracticeState>(
+    initialPracticeState,
   );
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [view, setView] = useState<ViewMode>("practice");
-  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
-    questions[0]?.id ?? null,
-  );
+  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(null);
   const [questionEpoch, setQuestionEpoch] = useState(0);
+  const [detailRetry, setDetailRetry] = useState(0);
+  const [detailState, setDetailState] = useState<DetailState>({ status: "idle" });
   const [resetOpen, setResetOpen] = useState(false);
   const resetCancelRef = useRef<HTMLButtonElement>(null);
 
+  const startCatalogLoad = useCallback(() => {
+    catalogControllerRef.current?.abort();
+    detailControllerRef.current?.abort();
+    const controller = new AbortController();
+    const version = catalogVersionRef.current + 1;
+    catalogVersionRef.current = version;
+    catalogControllerRef.current = controller;
+    setCatalogStatus("loading");
+
+    void loadCatalog(controller.signal)
+      .then((nextCatalog) => {
+        if (controller.signal.aborted || catalogVersionRef.current !== version) {
+          return;
+        }
+
+        setCatalog(nextCatalog);
+        setPracticeState(loadPracticeState(storageRef.current, nextCatalog));
+        setCurrentQuestionId(nextCatalog[0]?.id ?? null);
+        setQuestionEpoch((epoch) => epoch + 1);
+        setCatalogStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted && !isAbortError(error)) {
+          setCatalogStatus("error");
+        }
+      });
+  }, []);
+
+  useEffect(() => {
+    startCatalogLoad();
+    return () => {
+      catalogVersionRef.current += 1;
+      detailVersionRef.current += 1;
+      catalogControllerRef.current?.abort();
+      detailControllerRef.current?.abort();
+    };
+  }, [startCatalogLoad]);
+
+  const questionById = useMemo(
+    () => new Map(catalog.map((question) => [question.id, question])),
+    [catalog],
+  );
   const pool = useMemo(
-    () => filterQuestions(questions, filters, practiceState),
-    [filters, practiceState],
+    () => filterQuestions(catalog, filters, practiceState),
+    [catalog, filters, practiceState],
   );
   const stats = useMemo(
-    () => deriveTopicStats(questions, practiceState.attempts),
-    [practiceState.attempts],
+    () => deriveTopicStats(catalog, practiceState.attempts),
+    [catalog, practiceState.attempts],
   );
-  const currentQuestion = currentQuestionId
+  const currentMeta = currentQuestionId
     ? (questionById.get(currentQuestionId) ?? null)
     : null;
   const streak = countStreak(practiceState.attempts);
+
+  useEffect(() => {
+    detailControllerRef.current?.abort();
+    const meta = currentMeta;
+    if (catalogStatus !== "ready" || !meta) {
+      setDetailState({ status: "idle" });
+      return;
+    }
+
+    const controller = new AbortController();
+    const version = detailVersionRef.current + 1;
+    detailVersionRef.current = version;
+    detailControllerRef.current = controller;
+    setDetailState({ status: "loading", questionId: meta.id });
+
+    void fetchQuestionDetail(meta, controller.signal)
+      .then((question) => {
+        if (
+          controller.signal.aborted ||
+          detailVersionRef.current !== version ||
+          question.id !== meta.id
+        ) {
+          return;
+        }
+        setDetailState({ status: "ready", questionId: meta.id, question });
+      })
+      .catch((error: unknown) => {
+        if (
+          !controller.signal.aborted &&
+          !isAbortError(error) &&
+          detailVersionRef.current === version
+        ) {
+          setDetailState({ status: "error", questionId: meta.id });
+        }
+      });
+
+    return () => controller.abort();
+  }, [catalogStatus, currentMeta, detailRetry]);
 
   useEffect(() => {
     if (!resetOpen) {
@@ -127,7 +228,7 @@ export default function App() {
   }, [resetOpen]);
 
   const choosePoolStart = (nextFilters: Filters, state = practiceState) => {
-    const nextPool = filterQuestions(questions, nextFilters, state);
+    const nextPool = filterQuestions(catalog, nextFilters, state);
     setCurrentQuestionId(nextPool[0]?.id ?? null);
     setQuestionEpoch((epoch) => epoch + 1);
   };
@@ -150,22 +251,22 @@ export default function App() {
     choosePoolStart(nextFilters);
   };
 
-  const submitAnswer = (selectedIndex: number): boolean => {
-    if (!currentQuestion) {
+  const submitAnswer = (response: string): boolean => {
+    if (detailState.status !== "ready") {
       return false;
     }
 
-    const correct = selectedIndex === currentQuestion.answerIndex;
+    const correct = gradeResponse(detailState.question, response);
     const attempt: Attempt = {
-      id: nextAttemptId(currentQuestion.id),
-      questionId: currentQuestion.id,
-      selectedIndex,
+      id: nextAttemptId(detailState.question.id),
+      questionId: detailState.question.id,
+      response,
       correct,
       createdAt: new Date().toISOString(),
     };
     const nextState = recordAttempt(practiceState, attempt);
     setPracticeState(nextState);
-    savePracticeState(storageRef.current ?? memoryStorage, nextState);
+    savePracticeState(storageRef.current, nextState);
     return correct;
   };
 
@@ -188,7 +289,7 @@ export default function App() {
   const confirmReset = () => {
     const nextState = initialPracticeState();
     setPracticeState(nextState);
-    savePracticeState(storageRef.current ?? memoryStorage, nextState);
+    savePracticeState(storageRef.current, nextState);
     setResetOpen(false);
     setView("practice");
     setFilters(DEFAULT_FILTERS);
@@ -199,12 +300,8 @@ export default function App() {
     <div className="app-shell">
       <header className="site-header">
         <button className="wordmark" type="button" onClick={practiceAll}>
-          <span className="wordmark-mark" aria-hidden="true">
-            S
-          </span>
-          <span>
-            SAT <strong>Signal</strong>
-          </span>
+          <span className="wordmark-mark" aria-hidden="true">S</span>
+          <span>SAT <strong>Signal</strong></span>
         </button>
 
         <nav className="primary-nav" aria-label="Primary navigation">
@@ -215,6 +312,7 @@ export default function App() {
               aria-current={view === item ? "page" : undefined}
               key={item}
               onClick={() => setView(item)}
+              disabled={catalogStatus !== "ready"}
             >
               {item[0].toUpperCase() + item.slice(1)}
             </button>
@@ -222,59 +320,91 @@ export default function App() {
         </nav>
 
         <div className="header-progress">
-          <span className="streak">
-            <i aria-hidden="true" />
-            {streak} day streak
-          </span>
-          <button className="reset-trigger" type="button" onClick={() => setResetOpen(true)}>
+          <span className="streak"><i aria-hidden="true" />{streak} day streak</span>
+          <button
+            className="reset-trigger"
+            type="button"
+            disabled={catalogStatus !== "ready"}
+            onClick={() => setResetOpen(true)}
+          >
             Reset
           </button>
         </div>
       </header>
 
       <main>
-        {view === "practice" ? (
+        {catalogStatus === "loading" ? (
+          <section className="service-state" aria-live="polite">
+            <span className="loading-pulse" aria-hidden="true" />
+            <p className="section-index">Connecting to the live bank</p>
+            <h1>Loading released SAT questions…</h1>
+            <p>Fetching the current College Board catalog. Your saved progress stays in this browser.</p>
+          </section>
+        ) : null}
+
+        {catalogStatus === "error" ? (
+          <section className="service-state" role="alert">
+            <div className="empty-mark" aria-hidden="true">↻</div>
+            <p className="section-index">Question bank unavailable</p>
+            <h1>We could not reach College Board.</h1>
+            <p>The live service may be temporarily unavailable. Nothing in your saved progress was changed.</p>
+            <button className="button button-primary" type="button" onClick={startCatalogLoad}>
+              Try again
+            </button>
+          </section>
+        ) : null}
+
+        {catalogStatus === "ready" && catalog.length === 0 ? (
+          <section className="service-state" role="status">
+            <p className="section-index">Live bank connected</p>
+            <h1>No eligible released questions were returned.</h1>
+            <button className="button button-primary" type="button" onClick={startCatalogLoad}>
+              Refresh catalog
+            </button>
+          </section>
+        ) : null}
+
+        {catalogStatus === "ready" && catalog.length > 0 && view === "practice" ? (
           <>
             <FilterBar
               filters={filters}
-              questions={questions}
+              questions={catalog}
               unresolvedCount={practiceState.unresolvedIds.length}
               onChange={changeFilters}
             />
             <PracticeView
               key={`${currentQuestionId ?? "empty"}-${questionEpoch}`}
-              currentQuestion={currentQuestion}
+              currentMeta={currentMeta}
+              detailState={detailState}
               pool={pool}
               stats={stats}
               unresolvedCount={practiceState.unresolvedIds.length}
               attemptedCount={practiceState.attempts.length}
-              focusQuestion={questionEpoch > 0}
+              focusQuestion={questionEpoch > 1}
               onSubmit={submitAnswer}
               onNext={nextQuestion}
+              onRetryDetail={() => setDetailRetry((retry) => retry + 1)}
               onPracticeAll={practiceAll}
             />
           </>
         ) : null}
 
-        {view === "review" ? (
+        {catalogStatus === "ready" && catalog.length > 0 && view === "review" ? (
           <ReviewView
-            questions={questions}
+            questions={catalog}
             state={practiceState}
             onPracticeMisses={practiceMisses}
             onPracticeAll={practiceAll}
           />
         ) : null}
 
-        {view === "memory" ? (
+        {catalogStatus === "ready" && catalog.length > 0 && view === "memory" ? (
           <section className="view-page memory-page" aria-labelledby="memory-title">
             <header className="view-intro memory-intro">
               <div>
                 <p className="section-index">Memory</p>
                 <h1 id="memory-title">See the work become a pattern.</h1>
-                <p>
-                  Length shows accuracy. The dot rhythm tightens as attempts
-                  accumulate, so one lucky answer never looks like mastery.
-                </p>
+                <p>Length shows accuracy. The dot rhythm tightens as attempts accumulate, so one lucky answer never looks like mastery.</p>
               </div>
               <span className="memory-total">
                 {practiceState.attempts.length.toString().padStart(2, "0")}
@@ -289,34 +419,24 @@ export default function App() {
                 <span>Latest 06</span>
               </div>
               {practiceState.attempts.length === 0 ? (
-                <p className="review-empty">
-                  Your most recent answers will appear here after the first check.
-                </p>
+                <p className="review-empty">Your most recent answers will appear here after the first check.</p>
               ) : (
                 <ol>
-                  {practiceState.attempts
-                    .slice(-6)
-                    .reverse()
-                    .map((attempt) => {
-                      const question = questionById.get(attempt.questionId) as
-                        | Question
-                        | undefined;
-                      return (
-                        <li key={attempt.id}>
-                          <span className={attempt.correct ? "activity-correct" : "activity-missed"}>
-                            {attempt.correct ? "Correct" : "Missed"}
-                          </span>
-                          <strong>{question?.domain ?? "Unknown topic"}</strong>
-                          <span>{question?.skill ?? "Question removed"}</span>
-                          <time dateTime={attempt.createdAt}>
-                            {new Intl.DateTimeFormat(undefined, {
-                              month: "short",
-                              day: "numeric",
-                            }).format(new Date(attempt.createdAt))}
-                          </time>
-                        </li>
-                      );
-                    })}
+                  {practiceState.attempts.slice(-6).reverse().map((attempt) => {
+                    const question = questionById.get(attempt.questionId);
+                    return (
+                      <li key={attempt.id}>
+                        <span className={attempt.correct ? "activity-correct" : "activity-missed"}>
+                          {attempt.correct ? "Correct" : "Missed"}
+                        </span>
+                        <strong>{question?.domain ?? "Unknown topic"}</strong>
+                        <span>{question?.skill ?? "Question removed"}</span>
+                        <time dateTime={attempt.createdAt}>
+                          {new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(attempt.createdAt))}
+                        </time>
+                      </li>
+                    );
+                  })}
                 </ol>
               )}
             </section>
@@ -324,28 +444,25 @@ export default function App() {
         ) : null}
       </main>
 
+      {catalogStatus === "ready" && catalog.length > 0 ? (
+        <footer className="source-footer">
+          <span><strong>{catalog.length.toLocaleString()}</strong> eligible released questions live</span>
+          <span aria-hidden="true">·</span>
+          <a href="https://satsuitequestionbank.collegeboard.org/" target="_blank" rel="noreferrer">
+            Content from College Board Question Bank
+          </a>
+          <span>Unofficial personal interface</span>
+        </footer>
+      ) : null}
+
       {resetOpen ? (
         <div className="dialog-backdrop">
-          <section
-            className="reset-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="reset-title"
-            aria-describedby="reset-description"
-          >
+          <section className="reset-dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" aria-describedby="reset-description">
             <p className="section-index">Reset progress</p>
             <h2 id="reset-title">Erase this memory trace?</h2>
-            <p id="reset-description">
-              This permanently clears attempts, unresolved misses, and miss history
-              stored in this browser.
-            </p>
+            <p id="reset-description">This permanently clears attempts, unresolved misses, and miss history stored in this browser.</p>
             <div className="dialog-actions">
-              <button
-                className="button button-quiet"
-                type="button"
-                ref={resetCancelRef}
-                onClick={() => setResetOpen(false)}
-              >
+              <button className="button button-quiet" type="button" ref={resetCancelRef} onClick={() => setResetOpen(false)}>
                 Keep progress
               </button>
               <button className="button button-danger" type="button" onClick={confirmReset}>

@@ -1,7 +1,7 @@
-import type { PracticeState, Question } from "../types";
+import type { PracticeState, QuestionMeta } from "../types";
 
 type ReviewViewProps = {
-  questions: readonly Question[];
+  questions: readonly QuestionMeta[];
   state: PracticeState;
   onPracticeMisses: () => void;
   onPracticeAll: () => void;
@@ -9,7 +9,7 @@ type ReviewViewProps = {
 
 type ReviewListProps = {
   ids: readonly string[];
-  questionsById: ReadonlyMap<string, Question>;
+  questionsById: ReadonlyMap<string, QuestionMeta>;
   emptyText: string;
   unresolvedIds: ReadonlySet<string>;
 };
@@ -42,7 +42,8 @@ function ReviewList({
                 {" · "}
                 {question.domain}
               </p>
-              <strong>{question.prompt}</strong>
+              <strong>{question.skill}</strong>
+              <small>Question {question.id}</small>
             </div>
             <span className="review-state">
               {unresolved ? "Still open" : "Resolved"}

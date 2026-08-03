@@ -1,8 +1,8 @@
-import type { Filters, Question, Subject } from "../types";
+import type { Filters, QuestionMeta, Subject } from "../types";
 
 type FilterBarProps = {
   filters: Filters;
-  questions: readonly Question[];
+  questions: readonly QuestionMeta[];
   unresolvedCount: number;
   onChange: (filters: Filters) => void;
 };
@@ -16,14 +16,21 @@ export function FilterBar({
   unresolvedCount,
   onChange,
 }: FilterBarProps) {
+  const subjectQuestions = questions.filter(
+    (question) =>
+      filters.subject === "All" || question.section === filters.subject,
+  );
   const domainOptions = Array.from(
+    new Set(subjectQuestions.map((question) => question.domain)),
+  ).sort((a, b) => a.localeCompare(b));
+  const skillOptions = Array.from(
     new Set(
-      questions
+      subjectQuestions
         .filter(
           (question) =>
-            filters.subject === "All" || question.section === filters.subject,
+            filters.domain === "All" || question.domain === filters.domain,
         )
-        .map((question) => question.domain),
+        .map((question) => question.skill),
     ),
   ).sort((a, b) => a.localeCompare(b));
 
@@ -39,13 +46,12 @@ export function FilterBar({
                 ...filters,
                 subject: event.target.value as Filters["subject"],
                 domain: "All",
+                skill: "All",
               })
             }
           >
             <option value="All">All subjects</option>
-            <option value="reading-writing">
-              {subjectLabel("reading-writing")}
-            </option>
+            <option value="reading-writing">{subjectLabel("reading-writing")}</option>
             <option value="math">{subjectLabel("math")}</option>
           </select>
         </label>
@@ -55,14 +61,25 @@ export function FilterBar({
           <select
             value={filters.domain}
             onChange={(event) =>
-              onChange({ ...filters, domain: event.target.value })
+              onChange({ ...filters, domain: event.target.value, skill: "All" })
             }
           >
             <option value="All">All domains</option>
             {domainOptions.map((domain) => (
-              <option key={domain} value={domain}>
-                {domain}
-              </option>
+              <option key={domain} value={domain}>{domain}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="filter-field filter-field-skill">
+          <span>Skill</span>
+          <select
+            value={filters.skill}
+            onChange={(event) => onChange({ ...filters, skill: event.target.value })}
+          >
+            <option value="All">All skills</option>
+            {skillOptions.map((skill) => (
+              <option key={skill} value={skill}>{skill}</option>
             ))}
           </select>
         </label>
@@ -101,9 +118,7 @@ export function FilterBar({
             onClick={() => onChange({ ...filters, mode: "missed" })}
           >
             <span>Practice misses</span>
-            <span className="mode-count">
-              {unresolvedCount} unresolved
-            </span>
+            <span className="mode-count">{unresolvedCount} unresolved</span>
           </button>
         </div>
       </div>

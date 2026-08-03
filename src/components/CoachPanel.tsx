@@ -1,23 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  localCoachSummary,
-  requestCoachSummary,
-} from "../lib/coach";
-import type { Question } from "../types";
+import { localCoachSummary, requestCoachSummary } from "../lib/coach";
+import type { QuestionDetail } from "../types";
 
 type CoachPanelProps = {
-  question: Question;
-  selectedIndex: number;
+  question: QuestionDetail;
+  response: string;
   autoStart: boolean;
 };
 
-export function CoachPanel({
-  question,
-  selectedIndex,
-  autoStart,
-}: CoachPanelProps) {
+export function CoachPanel({ question, response, autoStart }: CoachPanelProps) {
   const [summary, setSummary] = useState(() =>
-    localCoachSummary(question, selectedIndex),
+    localCoachSummary(question, response),
   );
   const [revealed, setRevealed] = useState(autoStart);
   const [loading, setLoading] = useState(false);
@@ -33,19 +26,26 @@ export function CoachPanel({
     setRevealed(true);
     setLoading(true);
 
-    void requestCoachSummary(
-      { question, selectedIndex },
-      controller.signal,
-    ).then((nextSummary) => {
-      if (
-        !controller.signal.aborted &&
-        requestVersionRef.current === requestVersion
-      ) {
-        setSummary(nextSummary);
-        setLoading(false);
-      }
-    });
-  }, [question, selectedIndex]);
+    void requestCoachSummary({ question, response }, controller.signal).then(
+      (nextSummary) => {
+        if (
+          !controller.signal.aborted &&
+          requestVersionRef.current === requestVersion
+        ) {
+          setSummary(nextSummary);
+          setLoading(false);
+        }
+      },
+      () => {
+        if (
+          !controller.signal.aborted &&
+          requestVersionRef.current === requestVersion
+        ) {
+          setLoading(false);
+        }
+      },
+    );
+  }, [question, response]);
 
   useEffect(() => {
     if (autoStart) {
@@ -61,13 +61,13 @@ export function CoachPanel({
   return (
     <aside className="coach-panel" aria-busy={loading}>
       <div className="coach-copy">
-        <p className="section-index">Coach recap</p>
+        <p className="section-index">AI coach recap</p>
         {revealed ? (
           <p className="coach-summary">{summary}</p>
         ) : (
           <p className="coach-invite">
-            Want another way into this question? The coach uses the built-in
-            rationale and never changes your result.
+            Want a shorter way into this question? Ask for a summary of the
+            official rationale. It never changes your result.
           </p>
         )}
       </div>
@@ -77,7 +77,7 @@ export function CoachPanel({
         disabled={loading}
         onClick={askCoach}
       >
-        Ask coach{loading ? <span aria-hidden="true">…</span> : null}
+        Explain this{loading ? <span aria-hidden="true">…</span> : null}
         {loading ? <span className="sr-only">, loading</span> : null}
       </button>
     </aside>
