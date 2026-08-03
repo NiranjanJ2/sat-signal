@@ -43,7 +43,10 @@ function ReviewList({
                 {question.domain}
               </p>
               <strong>{question.skill}</strong>
-              <small>Question {question.id}</small>
+              <small>
+                {question.difficulty[0]?.toUpperCase()}
+                {question.difficulty.slice(1)} difficulty
+              </small>
             </div>
             <span className="review-state">
               {unresolved ? "Still open" : "Resolved"}

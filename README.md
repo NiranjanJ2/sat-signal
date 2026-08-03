@@ -1,6 +1,6 @@
-# Trace — SAT practice
+# SAT Signal — live SAT practice
 
-Trace is a local-first practice loop over College Board's live SAT Question Bank. Filter by section, domain, skill, and difficulty; answer one problem at a time; retry unresolved misses; and watch topic accuracy accumulate in a persistent memory trace.
+SAT Signal is a local-first practice loop over College Board's live SAT Question Bank. Filter by section, domain, skill, and difficulty; answer one problem at a time; retry unresolved misses; and watch topic accuracy accumulate in a persistent memory trace.
 
 ## Run it
 
