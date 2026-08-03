@@ -5,6 +5,11 @@ import { createServer as createViteServer } from "vite";
 import { createApiApp } from "./app";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+try {
+  process.loadEnvFile(path.join(root, ".env"));
+} catch {
+  // The AI coach is optional, so a missing .env file is expected.
+}
 const port = Number.parseInt(process.env.PORT ?? "5173", 10);
 const app = createApiApp();
 
@@ -26,4 +31,3 @@ if (process.env.NODE_ENV === "production") {
 app.listen(port, "127.0.0.1", () => {
   console.log(`Trace SAT is running at http://127.0.0.1:${port}`);
 });
-
