@@ -93,16 +93,143 @@ describe("SAT practice app", () => {
     coachMocks.requestCoachSummary.mockReset();
   });
 
-  it("loads the live catalog and then fetches one question on demand", async () => {
+  it("loads the current question, prefetches one lookahead, and advances from memory", async () => {
     prepareSuccess();
     render(<App />);
 
     expect(screen.getByRole("heading", { name: /loading released SAT questions/i })).toBeVisible();
     expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
     expect(qbankMocks.loadCatalog).toHaveBeenCalledTimes(1);
-    expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2),
+    );
+    expect(qbankMocks.fetchQuestionDetail).toHaveBeenNthCalledWith(
+      2,
+      catalog[1],
+      expect.any(AbortSignal),
+    );
     expect(screen.getByText("2").closest("span")).toHaveTextContent(/2 eligible released questions live/i);
     expect(screen.getByRole("link", { name: /content from college board/i })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next question/i }));
+
+    expect(screen.getByRole("heading", { name: /what is the value of x/i })).toBeVisible();
+    expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts the lookahead while the current question is still loading", async () => {
+    let resolveCurrent!: (question: QuestionDetail) => void;
+    const currentDetail = new Promise<QuestionDetail>((resolve) => {
+      resolveCurrent = resolve;
+    });
+    qbankMocks.loadCatalog.mockResolvedValue(catalog);
+    qbankMocks.fetchQuestionDetail.mockImplementation((meta: QuestionMeta) =>
+      meta.id === "rw-1"
+        ? currentDetail
+        : Promise.resolve(details[meta.id]),
+    );
+
+    render(<App />);
+    expect(await screen.findByText(/fetching this question/i)).toBeVisible();
+    await waitFor(() =>
+      expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2),
+    );
+
+    await act(async () => resolveCurrent(details["rw-1"]!));
+    expect(
+      await screen.findByRole("heading", { name: /which choice best states/i }),
+    ).toBeVisible();
+  });
+
+  it("promotes a pending lookahead without restarting its request", async () => {
+    let resolveLookahead!: (question: QuestionDetail) => void;
+    const lookaheadDetail = new Promise<QuestionDetail>((resolve) => {
+      resolveLookahead = resolve;
+    });
+    qbankMocks.loadCatalog.mockResolvedValue(catalog);
+    qbankMocks.fetchQuestionDetail.mockImplementation((meta: QuestionMeta) =>
+      meta.id === "rw-1"
+        ? Promise.resolve(details[meta.id])
+        : lookaheadDetail,
+    );
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    await waitFor(() =>
+      expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2),
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next question/i }));
+
+    expect(screen.getByText(/fetching this question/i)).toBeVisible();
+    expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2);
+    await act(async () => resolveLookahead(details["math-1"]!));
+    expect(
+      await screen.findByRole("heading", { name: /what is the value of x/i }),
+    ).toBeVisible();
+    expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels an irrelevant lookahead when the queue changes", async () => {
+    qbankMocks.loadCatalog.mockResolvedValue(catalog);
+    qbankMocks.fetchQuestionDetail.mockImplementation(
+      (meta: QuestionMeta) =>
+        meta.id === "rw-1"
+          ? Promise.resolve(details[meta.id])
+          : new Promise<QuestionDetail>(() => {}),
+    );
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    await waitFor(() =>
+      expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2),
+    );
+    const prefetchSignal = qbankMocks.fetchQuestionDetail.mock.calls[1]?.[1] as
+      | AbortSignal
+      | undefined;
+    expect(prefetchSignal?.aborted).toBe(false);
+
+    fireEvent.change(screen.getByLabelText(/subject/i), {
+      target: { value: "reading-writing" },
+    });
+
+    await waitFor(() => expect(prefetchSignal?.aborted).toBe(true));
+  });
+
+  it("reattaches current detail loading after leaving and returning to Practice", async () => {
+    let readingRequests = 0;
+    qbankMocks.loadCatalog.mockResolvedValue(catalog);
+    qbankMocks.fetchQuestionDetail.mockImplementation((meta: QuestionMeta) => {
+      if (meta.id === "rw-1") {
+        readingRequests += 1;
+        return readingRequests === 1
+          ? new Promise<QuestionDetail>(() => {})
+          : Promise.resolve(details[meta.id]);
+      }
+      return Promise.resolve(details[meta.id]);
+    });
+
+    render(<App />);
+    expect(await screen.findByText(/fetching this question/i)).toBeVisible();
+    await waitFor(() =>
+      expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^review$/i }));
+    expect(
+      screen.getByRole("heading", { name: /return to the ideas that slipped/i }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /^practice$/i }));
+
+    expect(
+      await screen.findByRole("heading", { name: /which choice best states/i }),
+    ).toBeVisible();
+    expect(readingRequests).toBe(2);
+    expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(3);
   });
 
   it("records one persistent miss without storing question content and auto-opens coaching", async () => {
@@ -198,9 +325,16 @@ describe("SAT practice app", () => {
     qbankMocks.loadCatalog
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(catalog);
-    qbankMocks.fetchQuestionDetail
-      .mockRejectedValueOnce(new Error("detail failed"))
-      .mockResolvedValueOnce(details["rw-1"]);
+    let readingAttempts = 0;
+    qbankMocks.fetchQuestionDetail.mockImplementation((meta: QuestionMeta) => {
+      if (meta.id === "rw-1") {
+        readingAttempts += 1;
+        return readingAttempts === 1
+          ? Promise.reject(new Error("detail failed"))
+          : Promise.resolve(details[meta.id]);
+      }
+      return Promise.resolve(details[meta.id]);
+    });
 
     render(<App />);
     expect(await screen.findByRole("heading", { name: /could not reach college board/i })).toBeVisible();
@@ -209,7 +343,9 @@ describe("SAT practice app", () => {
     fireEvent.click(screen.getByRole("button", { name: /retry question/i }));
     expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
     expect(qbankMocks.loadCatalog).toHaveBeenCalledTimes(2);
-    expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(3),
+    );
   });
 
   it("offers a clear empty state when retry mode has no unresolved misses", async () => {

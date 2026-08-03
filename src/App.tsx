@@ -51,6 +51,13 @@ type DetailState =
   | { status: "error"; questionId: string }
   | { status: "ready"; questionId: string; question: QuestionDetail };
 
+type DetailRequest = {
+  controller: AbortController;
+  promise: Promise<QuestionDetail>;
+};
+
+const DETAIL_CACHE_LIMIT = 3;
+
 let attemptSequence = 0;
 
 const resolveStorage = (): StorageLike => {
@@ -71,6 +78,38 @@ const isAbortError = (error: unknown): boolean =>
   error !== null &&
   "name" in error &&
   error.name === "AbortError";
+
+const rememberQuestionDetail = (
+  cache: Map<string, QuestionDetail>,
+  question: QuestionDetail,
+) => {
+  cache.delete(question.id);
+  cache.set(question.id, question);
+
+  while (cache.size > DETAIL_CACHE_LIMIT) {
+    const oldestId = cache.keys().next().value;
+    if (oldestId === undefined) {
+      break;
+    }
+    cache.delete(oldestId);
+  }
+};
+
+const nextQuestionInPool = (
+  pool: readonly QuestionMeta[],
+  currentQuestionId: string | null,
+): QuestionMeta | undefined => {
+  if (pool.length === 0) {
+    return undefined;
+  }
+
+  const currentIndex = pool.findIndex(
+    (question) => question.id === currentQuestionId,
+  );
+  const nextIndex =
+    pool.length === 1 || currentIndex < 0 ? 0 : (currentIndex + 1) % pool.length;
+  return pool[nextIndex];
+};
 
 const countStreak = (attempts: readonly Attempt[]): number => {
   const days = new Set(
@@ -102,8 +141,9 @@ export default function App() {
   const storageRef = useRef<StorageLike>(resolveStorage());
   const catalogControllerRef = useRef<AbortController | null>(null);
   const catalogVersionRef = useRef(0);
-  const detailControllerRef = useRef<AbortController | null>(null);
   const detailVersionRef = useRef(0);
+  const detailCacheRef = useRef(new Map<string, QuestionDetail>());
+  const detailRequestsRef = useRef(new Map<string, DetailRequest>());
 
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
   const [catalog, setCatalog] = useState<QuestionMeta[]>([]);
@@ -119,9 +159,48 @@ export default function App() {
   const [resetOpen, setResetOpen] = useState(false);
   const resetCancelRef = useRef<HTMLButtonElement>(null);
 
+  const abortAllDetailRequests = useCallback(() => {
+    for (const request of detailRequestsRef.current.values()) {
+      request.controller.abort();
+    }
+    detailRequestsRef.current.clear();
+  }, []);
+
+  const requestQuestionDetail = useCallback((meta: QuestionMeta) => {
+    const cachedQuestion = detailCacheRef.current.get(meta.id);
+    if (cachedQuestion) {
+      return Promise.resolve(cachedQuestion);
+    }
+
+    const pendingRequest = detailRequestsRef.current.get(meta.id);
+    if (pendingRequest) {
+      return pendingRequest.promise;
+    }
+
+    const controller = new AbortController();
+    const promise = fetchQuestionDetail(meta, controller.signal)
+      .then((question) => {
+        if (!controller.signal.aborted && question.id === meta.id) {
+          rememberQuestionDetail(detailCacheRef.current, question);
+        }
+        return question;
+      })
+      .finally(() => {
+        const activeRequest = detailRequestsRef.current.get(meta.id);
+        if (activeRequest?.promise === promise) {
+          detailRequestsRef.current.delete(meta.id);
+        }
+      });
+
+    detailRequestsRef.current.set(meta.id, { controller, promise });
+    return promise;
+  }, []);
+
   const startCatalogLoad = useCallback(() => {
     catalogControllerRef.current?.abort();
-    detailControllerRef.current?.abort();
+    abortAllDetailRequests();
+    detailVersionRef.current += 1;
+    detailCacheRef.current.clear();
     const controller = new AbortController();
     const version = catalogVersionRef.current + 1;
     catalogVersionRef.current = version;
@@ -145,7 +224,7 @@ export default function App() {
           setCatalogStatus("error");
         }
       });
-  }, []);
+  }, [abortAllDetailRequests]);
 
   useEffect(() => {
     startCatalogLoad();
@@ -153,9 +232,9 @@ export default function App() {
       catalogVersionRef.current += 1;
       detailVersionRef.current += 1;
       catalogControllerRef.current?.abort();
-      detailControllerRef.current?.abort();
+      abortAllDetailRequests();
     };
-  }, [startCatalogLoad]);
+  }, [abortAllDetailRequests, startCatalogLoad]);
 
   const questionById = useMemo(
     () => new Map(catalog.map((question) => [question.id, question])),
@@ -175,23 +254,31 @@ export default function App() {
   const streak = countStreak(practiceState.attempts);
 
   useEffect(() => {
-    detailControllerRef.current?.abort();
     const meta = currentMeta;
-    if (catalogStatus !== "ready" || !meta) {
+    if (catalogStatus !== "ready" || view !== "practice" || !meta) {
       setDetailState({ status: "idle" });
       return;
     }
 
-    const controller = new AbortController();
+    const cachedQuestion = detailCacheRef.current.get(meta.id);
+    if (cachedQuestion) {
+      setDetailState({
+        status: "ready",
+        questionId: meta.id,
+        question: cachedQuestion,
+      });
+      return;
+    }
+
     const version = detailVersionRef.current + 1;
     detailVersionRef.current = version;
-    detailControllerRef.current = controller;
+    let active = true;
     setDetailState({ status: "loading", questionId: meta.id });
 
-    void fetchQuestionDetail(meta, controller.signal)
+    void requestQuestionDetail(meta)
       .then((question) => {
         if (
-          controller.signal.aborted ||
+          !active ||
           detailVersionRef.current !== version ||
           question.id !== meta.id
         ) {
@@ -201,7 +288,7 @@ export default function App() {
       })
       .catch((error: unknown) => {
         if (
-          !controller.signal.aborted &&
+          active &&
           !isAbortError(error) &&
           detailVersionRef.current === version
         ) {
@@ -209,8 +296,45 @@ export default function App() {
         }
       });
 
-    return () => controller.abort();
-  }, [catalogStatus, currentMeta, detailRetry]);
+    return () => {
+      active = false;
+    };
+  }, [catalogStatus, currentMeta, detailRetry, requestQuestionDetail, view]);
+
+  useEffect(() => {
+    if (catalogStatus !== "ready" || view !== "practice" || !currentMeta) {
+      abortAllDetailRequests();
+      return;
+    }
+
+    const nextMeta = nextQuestionInPool(pool, currentQuestionId);
+    const desiredIds = new Set([currentMeta.id]);
+    if (nextMeta && nextMeta.id !== currentMeta.id) {
+      desiredIds.add(nextMeta.id);
+    }
+
+    for (const [questionId, request] of detailRequestsRef.current) {
+      if (!desiredIds.has(questionId)) {
+        request.controller.abort();
+        detailRequestsRef.current.delete(questionId);
+      }
+    }
+
+    void requestQuestionDetail(currentMeta).catch(() => {});
+    if (nextMeta && nextMeta.id !== currentMeta.id) {
+      void requestQuestionDetail(nextMeta).catch(() => {
+        // Lookahead is opportunistic; the current-detail path retries on demand.
+      });
+    }
+  }, [
+    abortAllDetailRequests,
+    catalogStatus,
+    currentMeta,
+    currentQuestionId,
+    pool,
+    requestQuestionDetail,
+    view,
+  ]);
 
   useEffect(() => {
     if (!resetOpen) {
@@ -227,10 +351,28 @@ export default function App() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [resetOpen]);
 
+  const activateQuestion = (question: QuestionMeta | undefined) => {
+    const questionId = question?.id ?? null;
+    const cachedQuestion = questionId
+      ? detailCacheRef.current.get(questionId)
+      : undefined;
+
+    setCurrentQuestionId(questionId);
+    if (cachedQuestion) {
+      setDetailState({
+        status: "ready",
+        questionId: cachedQuestion.id,
+        question: cachedQuestion,
+      });
+    } else if (!questionId) {
+      setDetailState({ status: "idle" });
+    }
+    setQuestionEpoch((epoch) => epoch + 1);
+  };
+
   const choosePoolStart = (nextFilters: Filters, state = practiceState) => {
     const nextPool = filterQuestions(catalog, nextFilters, state);
-    setCurrentQuestionId(nextPool[0]?.id ?? null);
-    setQuestionEpoch((epoch) => epoch + 1);
+    activateQuestion(nextPool[0]);
   };
 
   const changeFilters = (nextFilters: Filters) => {
@@ -271,19 +413,7 @@ export default function App() {
   };
 
   const nextQuestion = () => {
-    if (pool.length === 0) {
-      setCurrentQuestionId(null);
-      setQuestionEpoch((epoch) => epoch + 1);
-      return;
-    }
-
-    const currentIndex = pool.findIndex(
-      (question) => question.id === currentQuestionId,
-    );
-    const nextIndex =
-      pool.length === 1 || currentIndex < 0 ? 0 : (currentIndex + 1) % pool.length;
-    setCurrentQuestionId(pool[nextIndex]?.id ?? null);
-    setQuestionEpoch((epoch) => epoch + 1);
+    activateQuestion(nextQuestionInPool(pool, currentQuestionId));
   };
 
   const confirmReset = () => {

@@ -11,7 +11,7 @@ npm run dev
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Progress is saved in this browser with localStorage; no account is required.
 
-The browser loads released-question metadata directly from College Board, excludes IDs in the service's current live-item lists, and fetches one question's detail only when you open it. Question text, choices, rationales, and answer keys are not bundled or written to localStorage. Because this is an unofficial integration with an undocumented service, the endpoint can change without notice. Direct requests expose normal connection metadata such as your IP address and browser user agent to College Board.
+The browser loads released-question metadata directly from College Board, excludes IDs in the service's current live-item lists, and keeps only the open question plus a small in-memory lookahead cache so the next problem appears immediately. Question text, choices, rationales, and answer keys are not bundled or written to localStorage. Because this is an unofficial integration with an undocumented service, the endpoint can change without notice. Direct requests expose normal connection metadata such as your IP address and browser user agent to College Board.
 
 ## Optional AI coach
 
