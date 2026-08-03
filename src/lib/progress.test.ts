@@ -78,7 +78,9 @@ describe("progress mutations", () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
     const state = { ...initialPracticeState(), attempts: [attempt] };
 
-    await expect(importProgressDocument(state, 3, fetchImpl)).resolves.toBe("saved");
+    await expect(importProgressDocument(state, 3, fetchImpl)).resolves.toEqual({
+      status: "saved",
+    });
     expect(fetchImpl).toHaveBeenCalledWith("/api/progress/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -88,22 +90,38 @@ describe("progress mutations", () => {
 
   it("distinguishes a stale import from an unavailable server", async () => {
     const state = initialPracticeState();
+    const conflict = vi.fn(async () =>
+      new Response(JSON.stringify({ current: document }), { status: 409 }),
+    );
     await expect(
-      importProgressDocument(state, 2, vi.fn(async () => new Response(null, { status: 409 }))),
-    ).resolves.toBe("stale");
+      importProgressDocument(state, 2, conflict),
+    ).resolves.toEqual({ status: "stale", document });
     await expect(
       importProgressDocument(state, 2, vi.fn(async () => new Response(null, { status: 500 }))),
-    ).resolves.toBe("unavailable");
+    ).resolves.toEqual({ status: "unavailable" });
   });
 
-  it("appends only the newly created attempt", async () => {
+  it("appends only the newly created attempt in its current generation", async () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 201 }));
 
-    await expect(appendProgressAttempt(attempt, fetchImpl)).resolves.toBe(true);
+    await expect(appendProgressAttempt(attempt, 3, fetchImpl)).resolves.toEqual({
+      status: "saved",
+    });
     expect(fetchImpl).toHaveBeenCalledWith("/api/progress/attempt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(attempt),
+      body: JSON.stringify({ generation: 3, attempt }),
+    });
+  });
+
+  it("returns the current document when an append crosses a reset", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ current: document }), { status: 409 }),
+    );
+
+    await expect(appendProgressAttempt(attempt, 2, fetchImpl)).resolves.toEqual({
+      status: "stale",
+      document,
     });
   });
 

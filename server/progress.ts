@@ -69,22 +69,25 @@ export class ProgressStore {
   }
 
   append(value: unknown): Promise<ProgressDocument> {
-    let attempt: Attempt;
+    let appendRequest: { generation: number; attempt: Attempt };
     try {
-      attempt = normalizeAttempt(value, "input");
+      appendRequest = normalizeAppendRequest(value);
     } catch (error) {
       return Promise.reject(error);
     }
 
     return this.enqueue(async () => {
       const current = await this.readFromDisk();
-      if (current.attempts.some(({ id }) => id === attempt.id)) {
+      if (appendRequest.generation !== current.generation) {
+        throw new ProgressGenerationConflictError(current);
+      }
+      if (current.attempts.some(({ id }) => id === appendRequest.attempt.id)) {
         return current;
       }
 
       const updated = {
         ...current,
-        attempts: [...current.attempts, attempt],
+        attempts: [...current.attempts, appendRequest.attempt],
       };
       await this.writeToDisk(updated);
       return updated;
@@ -157,6 +160,23 @@ export class ProgressStore {
       throw error;
     }
   }
+}
+
+function normalizeAppendRequest(value: unknown): {
+  generation: number;
+  attempt: Attempt;
+} {
+  if (!isRecord(value) || !isGeneration(value.generation)) {
+    throw new InvalidProgressDocumentError(
+      "Progress append must include a generation and attempt.",
+      "input",
+    );
+  }
+
+  return {
+    generation: value.generation,
+    attempt: normalizeAttempt(value.attempt, "input"),
+  };
 }
 
 function normalizeImportDocument(value: unknown): ProgressDocument {

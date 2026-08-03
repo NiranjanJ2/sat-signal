@@ -111,8 +111,8 @@ describe("SAT practice app", () => {
       available: true,
       document: { version: 2, generation: 0, attempts: [] },
     });
-    progressMocks.importProgressDocument.mockResolvedValue("saved");
-    progressMocks.appendProgressAttempt.mockResolvedValue(true);
+    progressMocks.importProgressDocument.mockResolvedValue({ status: "saved" });
+    progressMocks.appendProgressAttempt.mockResolvedValue({ status: "saved" });
     progressMocks.resetProgressDocument.mockResolvedValue({
       available: true,
       document: { version: 2, generation: 1, attempts: [] },
@@ -299,6 +299,7 @@ describe("SAT practice app", () => {
     await waitFor(() =>
       expect(progressMocks.appendProgressAttempt).toHaveBeenCalledWith(
         expect.objectContaining({ questionId: "rw-1", correct: false }),
+        0,
       ),
     );
   });
@@ -425,6 +426,31 @@ describe("SAT practice app", () => {
       attempts: [],
       generation: 1,
     });
+  });
+
+  it("reconciles a delayed attempt that crosses a reset in another tab", async () => {
+    prepareSuccess();
+    progressMocks.appendProgressAttempt.mockResolvedValue({
+      status: "stale",
+      document: { version: 2, generation: 1, attempts: [] },
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+
+    await waitFor(() =>
+      expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}")).toEqual({
+        version: 2,
+        attempts: [],
+        generation: 1,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^memory$/i }));
+    expect(screen.getByText("total attempts").closest("span")).toHaveTextContent(
+      /00total attempts/i,
+    );
   });
 
   it("keeps progress intact when the durable reset fails", async () => {

@@ -55,27 +55,7 @@ export function createApiApp(
     try {
       response.json(await progress.import(request.body));
     } catch (error) {
-      if (error instanceof ProgressGenerationConflictError) {
-        response.status(409).json({
-          error: "Progress generation is stale.",
-          current: error.current,
-        });
-        return;
-      }
-
-      if (
-        error instanceof InvalidProgressDocumentError &&
-        error.source === "input"
-      ) {
-        response.status(400).json({ error: "Invalid progress document." });
-        return;
-      }
-
-      const message =
-        error instanceof InvalidProgressDocumentError
-          ? "Stored progress is unreadable."
-          : "Progress storage is unavailable.";
-      response.status(500).json({ error: message });
+      respondToProgressError(response, error);
     }
   });
   app.post("/api/progress/attempt", async (request, response) => {
@@ -128,6 +108,14 @@ function respondToProgressError(
   response: express.Response,
   error: unknown,
 ): void {
+  if (error instanceof ProgressGenerationConflictError) {
+    response.status(409).json({
+      error: "Progress generation is stale.",
+      current: error.current,
+    });
+    return;
+  }
+
   if (
     error instanceof InvalidProgressDocumentError &&
     error.source === "input"

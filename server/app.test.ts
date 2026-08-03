@@ -211,7 +211,7 @@ describe("progress API", () => {
 
     const appended = await postJson(
       `${baseUrl}/api/progress/attempt`,
-      secondAttempt,
+      { generation: 0, attempt: secondAttempt },
     );
     expect(appended.status).toBe(200);
     expect(await appended.json()).toEqual({
@@ -229,12 +229,15 @@ describe("progress API", () => {
 
   it("retains generation and history when the server restarts", async () => {
     const { baseUrl, progressFile } = await startServer();
-    await postJson(`${baseUrl}/api/progress/attempt`, attempt);
+    await postJson(`${baseUrl}/api/progress/attempt`, {
+      generation: 0,
+      attempt,
+    });
     const reset = await fetch(`${baseUrl}/api/progress`, { method: "DELETE" });
     expect(reset.status).toBe(200);
     await postJson(`${baseUrl}/api/progress/attempt`, {
-      ...attempt,
-      id: "after-reset",
+      generation: 1,
+      attempt: { ...attempt, id: "after-reset" },
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -279,7 +282,10 @@ describe("progress API", () => {
 
   it("returns conflict for a stale import after reset and leaves progress erased", async () => {
     const { baseUrl } = await startServer();
-    await postJson(`${baseUrl}/api/progress/attempt`, attempt);
+    await postJson(`${baseUrl}/api/progress/attempt`, {
+      generation: 0,
+      attempt,
+    });
     const reset = await fetch(`${baseUrl}/api/progress`, { method: "DELETE" });
     expect(await reset.json()).toEqual({
       version: 2,
@@ -287,7 +293,10 @@ describe("progress API", () => {
       attempts: [],
     });
     const currentAttempt = { ...attempt, id: "current-attempt" };
-    await postJson(`${baseUrl}/api/progress/attempt`, currentAttempt);
+    await postJson(`${baseUrl}/api/progress/attempt`, {
+      generation: 1,
+      attempt: currentAttempt,
+    });
 
     const stale = await postJson(`${baseUrl}/api/progress/import`, {
       version: 2,
@@ -301,6 +310,33 @@ describe("progress API", () => {
       current: { version: 2, generation: 1, attempts: [currentAttempt] },
     });
     const current = await fetch(`${baseUrl}/api/progress`);
+    expect(await current.json()).toEqual({
+      version: 2,
+      generation: 1,
+      attempts: [currentAttempt],
+    });
+  });
+
+  it("rejects a stale append after reset without resurrecting it", async () => {
+    const { baseUrl } = await startServer();
+    await fetch(`${baseUrl}/api/progress`, { method: "DELETE" });
+
+    const stale = await postJson(`${baseUrl}/api/progress/attempt`, {
+      generation: 0,
+      attempt,
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({
+      error: "Progress generation is stale.",
+      current: { version: 2, generation: 1, attempts: [] },
+    });
+
+    const currentAttempt = { ...attempt, id: "current-generation-attempt" };
+    const current = await postJson(`${baseUrl}/api/progress/attempt`, {
+      generation: 1,
+      attempt: currentAttempt,
+    });
+    expect(current.status).toBe(200);
     expect(await current.json()).toEqual({
       version: 2,
       generation: 1,

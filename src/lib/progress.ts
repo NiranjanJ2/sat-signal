@@ -9,7 +9,10 @@ export type ProgressLoadResult =
   | { available: false }
   | { available: true; document: unknown };
 
-export type ProgressImportResult = "saved" | "stale" | "unavailable";
+export type ProgressMutationResult =
+  | { status: "saved" }
+  | { status: "stale"; document: unknown }
+  | { status: "unavailable" };
 
 const isAbortError = (error: unknown): boolean =>
   typeof error === "object" &&
@@ -62,7 +65,7 @@ export async function importProgressDocument(
   state: PracticeState,
   generation: number,
   fetchImpl: FetchLike = fetch,
-): Promise<ProgressImportResult> {
+): Promise<ProgressMutationResult> {
   try {
     const response = await fetchImpl("/api/progress/import", {
       method: "POST",
@@ -70,27 +73,31 @@ export async function importProgressDocument(
       body: JSON.stringify({ version: 2, generation, attempts: state.attempts }),
     });
     if (response.status === 409) {
-      return "stale";
+      return parseConflict(response);
     }
-    return response.ok ? "saved" : "unavailable";
+    return response.ok ? { status: "saved" } : { status: "unavailable" };
   } catch {
-    return "unavailable";
+    return { status: "unavailable" };
   }
 }
 
 export async function appendProgressAttempt(
   attempt: Attempt,
+  generation: number,
   fetchImpl: FetchLike = fetch,
-): Promise<boolean> {
+): Promise<ProgressMutationResult> {
   try {
     const response = await fetchImpl("/api/progress/attempt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(attempt),
+      body: JSON.stringify({ generation, attempt }),
     });
-    return response.ok;
+    if (response.status === 409) {
+      return parseConflict(response);
+    }
+    return response.ok ? { status: "saved" } : { status: "unavailable" };
   } catch {
-    return false;
+    return { status: "unavailable" };
   }
 }
 
@@ -110,4 +117,21 @@ export async function resetProgressDocument(
   } catch {
     return { available: false };
   }
+}
+
+async function parseConflict(response: Response): Promise<ProgressMutationResult> {
+  try {
+    const payload: unknown = await response.json();
+    if (
+      typeof payload === "object" &&
+      payload !== null &&
+      "current" in payload &&
+      progressGeneration(payload.current) !== null
+    ) {
+      return { status: "stale", document: payload.current };
+    }
+  } catch {
+    // A malformed conflict response is treated as an unavailable store.
+  }
+  return { status: "unavailable" };
 }

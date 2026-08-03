@@ -189,6 +189,30 @@ export default function App() {
     return result;
   }, []);
 
+  const reconcileProgressDocument = useCallback(
+    (
+      document: unknown,
+      questions: readonly QuestionMeta[],
+      nextFilters: Filters,
+    ) => {
+      const generation = progressGeneration(document);
+      if (generation === null) {
+        return;
+      }
+
+      const state = hydratePracticeStateDocument(document, questions);
+      progressWritableRef.current = true;
+      progressGenerationRef.current = generation;
+      setPracticeState(state);
+      savePracticeState(storageRef.current, state, generation);
+      setCurrentQuestionId(
+        filterQuestions(questions, nextFilters, state)[0]?.id ?? null,
+      );
+      setQuestionEpoch((epoch) => epoch + 1);
+    },
+    [],
+  );
+
   const persistAttempt = useCallback(
     (state: PracticeState, attempt: Attempt) => {
       savePracticeState(
@@ -196,11 +220,18 @@ export default function App() {
         state,
         progressGenerationRef.current,
       );
-      if (progressWritableRef.current) {
-        void queueProgressOperation(() => appendProgressAttempt(attempt));
+      const generation = progressGenerationRef.current;
+      if (progressWritableRef.current && generation !== null) {
+        void queueProgressOperation(() =>
+          appendProgressAttempt(attempt, generation),
+        ).then((result) => {
+          if (result.status === "stale") {
+            reconcileProgressDocument(result.document, catalog, filters);
+          }
+        });
       }
     },
-    [queueProgressOperation],
+    [catalog, filters, queueProgressOperation, reconcileProgressDocument],
   );
 
   const requestQuestionDetail = useCallback((meta: QuestionMeta) => {
@@ -293,7 +324,18 @@ export default function App() {
         if (serverGeneration !== null && canMergeBrowser) {
           void queueProgressOperation(() =>
             importProgressDocument(nextPracticeState, serverGeneration),
-          );
+          ).then((result) => {
+            if (
+              result.status === "stale" &&
+              catalogVersionRef.current === version
+            ) {
+              reconcileProgressDocument(
+                result.document,
+                nextCatalog,
+                DEFAULT_FILTERS,
+              );
+            }
+          });
         }
         setCurrentQuestionId(nextPool[0]?.id ?? null);
         setQuestionEpoch((epoch) => epoch + 1);
@@ -304,7 +346,7 @@ export default function App() {
           setCatalogStatus("error");
         }
       });
-  }, [abortAllDetailRequests, queueProgressOperation]);
+  }, [abortAllDetailRequests, queueProgressOperation, reconcileProgressDocument]);
 
   useEffect(() => {
     startCatalogLoad();

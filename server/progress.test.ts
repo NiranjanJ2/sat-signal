@@ -98,7 +98,7 @@ describe("ProgressStore", () => {
   it("imports a sanitized union of unique attempts in the current generation", async () => {
     const progressFile = await makeProgressFile();
     const store = new ProgressStore(progressFile);
-    await store.append(attempt);
+    await store.append({ generation: 0, attempt });
 
     await expect(
       store.import({
@@ -152,13 +152,13 @@ describe("ProgressStore", () => {
   it("rejects a stale import after reset without restoring erased history", async () => {
     const progressFile = await makeProgressFile();
     const store = new ProgressStore(progressFile);
-    await store.append(attempt);
+    await store.append({ generation: 0, attempt });
     await expect(store.reset()).resolves.toEqual({
       version: 2,
       generation: 1,
       attempts: [],
     });
-    await store.append(secondAttempt);
+    await store.append({ generation: 1, attempt: secondAttempt });
 
     await expect(
       store.import({ version: 2, generation: 0, attempts: [attempt] }),
@@ -173,15 +173,38 @@ describe("ProgressStore", () => {
   it("appends only a new attempt after reset and retains it across store restart", async () => {
     const progressFile = await makeProgressFile();
     const store = new ProgressStore(progressFile);
-    await store.append(attempt);
+    await store.append({ generation: 0, attempt });
     await store.reset();
 
-    await expect(store.append(secondAttempt)).resolves.toEqual({
+    await expect(
+      store.append({ generation: 1, attempt: secondAttempt }),
+    ).resolves.toEqual({
       version: 2,
       generation: 1,
       attempts: [secondAttempt],
     });
     await expect(new ProgressStore(progressFile).read()).resolves.toEqual({
+      version: 2,
+      generation: 1,
+      attempts: [secondAttempt],
+    });
+  });
+
+  it("rejects a stale append racing after reset, then accepts the current generation", async () => {
+    const store = new ProgressStore(await makeProgressFile());
+    await store.reset();
+
+    await expect(
+      store.append({ generation: 0, attempt }),
+    ).rejects.toBeInstanceOf(ProgressGenerationConflictError);
+    await expect(store.read()).resolves.toEqual({
+      version: 2,
+      generation: 1,
+      attempts: [],
+    });
+    await expect(
+      store.append({ generation: 1, attempt: secondAttempt }),
+    ).resolves.toEqual({
       version: 2,
       generation: 1,
       attempts: [secondAttempt],
@@ -196,8 +219,15 @@ describe("ProgressStore", () => {
       kind: "import",
       value: { version: 2, generation: 0, attempts: [{ ...attempt, response: "" }] },
     },
-    { kind: "append", value: { ...attempt, correct: "false" } },
-    { kind: "append", value: { ...attempt, createdAt: "not-a-date" } },
+    { kind: "append", value: { generation: -1, attempt } },
+    {
+      kind: "append",
+      value: { generation: 0, attempt: { ...attempt, correct: "false" } },
+    },
+    {
+      kind: "append",
+      value: { generation: 0, attempt: { ...attempt, createdAt: "not-a-date" } },
+    },
   ])("rejects malformed $kind input without writing it", async ({ kind, value }) => {
     const progressFile = await makeProgressFile();
     const store = new ProgressStore(progressFile);
@@ -216,7 +246,7 @@ describe("ProgressStore", () => {
     const store = new ProgressStore(progressFile);
 
     await expect(store.read()).rejects.toBeInstanceOf(InvalidProgressDocumentError);
-    await expect(store.append(attempt)).rejects.toBeInstanceOf(
+    await expect(store.append({ generation: 0, attempt })).rejects.toBeInstanceOf(
       InvalidProgressDocumentError,
     );
     await expect(
