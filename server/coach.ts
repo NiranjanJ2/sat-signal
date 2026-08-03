@@ -50,9 +50,13 @@ const coachInput = (payload: CoachApiPayload): string =>
   [
     `Topic: ${payload.topic}`,
     `Question: ${payload.question}`,
-    `Choices: ${payload.choices.join(" | ")}`,
+    `Choices: ${
+      payload.choices.length > 0
+        ? payload.choices.join(" | ")
+        : "(student-produced response)"
+    }`,
     `Student selected: ${payload.selectedAnswer}`,
-    `Correct answer: ${payload.correctAnswer}`,
+    `Accepted answers: ${payload.correctAnswers.join(" | ")}`,
     `Built-in rationale: ${payload.rationale}`,
   ].join("\n");
 

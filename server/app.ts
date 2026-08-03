@@ -14,10 +14,11 @@ const isCoachPayload = (value: unknown): value is CoachApiPayload => {
   return (
     isNonemptyString(candidate.question) &&
     Array.isArray(candidate.choices) &&
-    candidate.choices.length === 4 &&
     candidate.choices.every(isNonemptyString) &&
     isNonemptyString(candidate.selectedAnswer) &&
-    isNonemptyString(candidate.correctAnswer) &&
+    Array.isArray(candidate.correctAnswers) &&
+    candidate.correctAnswers.length > 0 &&
+    candidate.correctAnswers.every(isNonemptyString) &&
     isNonemptyString(candidate.topic) &&
     isNonemptyString(candidate.rationale)
   );
@@ -40,4 +41,3 @@ export function createApiApp() {
 
   return app;
 }
-

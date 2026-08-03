@@ -4,9 +4,9 @@ import { generateCoachSummary } from "./coach";
 
 const payload: CoachApiPayload = {
   question: "Solve x + 2 = 5.",
-  choices: ["1", "2", "3", "4"],
-  selectedAnswer: "1",
-  correctAnswer: "3",
+  choices: ["A: 1", "B: 3"],
+  selectedAnswer: "A: 1",
+  correctAnswers: ["B: 3"],
   topic: "Algebra — Linear equations",
   rationale: "Subtract 2 from both sides to get x = 3.",
 };
@@ -77,6 +77,9 @@ describe("generateCoachSummary", () => {
       instructions: expect.stringMatching(/concise.*plain text/i),
       input: expect.stringContaining("Solve x + 2 = 5."),
     });
+    expect(JSON.parse(String(init?.body)).input).toContain(
+      "Accepted answers: B: 3",
+    );
   });
 
   it("uses the configured model override", async () => {

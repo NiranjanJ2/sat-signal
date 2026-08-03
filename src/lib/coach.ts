@@ -1,15 +1,16 @@
-import type { Question } from "../types";
+import { htmlToPlainText } from "../components/RichHtml";
+import type { QuestionChoice, QuestionDetail } from "../types";
 
 export type CoachRequest = {
-  question: Question;
-  selectedIndex: number;
+  question: QuestionDetail;
+  response: string;
 };
 
 export type CoachApiPayload = {
   question: string;
   choices: readonly string[];
   selectedAnswer: string;
-  correctAnswer: string;
+  correctAnswers: readonly string[];
   topic: string;
   rationale: string;
 };
@@ -23,38 +24,68 @@ type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-const answerLabels = ["A", "B", "C", "D"] as const;
-
-const answerDescription = (question: Question, index: number): string => {
-  const label = answerLabels[index];
-  const choice = question.choices[index];
-
-  return label !== undefined && choice !== undefined
-    ? `${label}: ${choice}`
-    : "an unavailable option";
+const describeChoice = (choice: QuestionChoice): string => {
+  const content = htmlToPlainText(choice.html);
+  return content ? `${choice.label}: ${content}` : choice.label;
 };
 
-export const localCoachSummary = (
-  question: Question,
-  selectedIndex: number,
-): string =>
-  `Focus on ${question.skill}. You chose ${answerDescription(question, selectedIndex)}; ` +
-  `the correct answer is ${answerDescription(question, question.answerIndex)}. ` +
-  question.explanation;
+const matchingChoice = (
+  question: QuestionDetail,
+  answer: string,
+): QuestionChoice | undefined => {
+  const normalized = answer.trim().toLowerCase();
+  return question.choices.find(
+    (choice) =>
+      choice.id.trim().toLowerCase() === normalized ||
+      choice.label.trim().toLowerCase() === normalized,
+  );
+};
 
-const toApiPayload = ({
-  question,
-  selectedIndex,
-}: CoachRequest): CoachApiPayload => ({
-  question: question.passage
-    ? `${question.passage}\n\n${question.prompt}`
-    : question.prompt,
-  choices: question.choices,
-  selectedAnswer: question.choices[selectedIndex] ?? "",
-  correctAnswer: question.choices[question.answerIndex],
-  topic: `${question.domain} — ${question.skill}`,
-  rationale: question.explanation,
-});
+const answerDescription = (
+  question: QuestionDetail,
+  answer: string,
+): string => {
+  const choice = matchingChoice(question, answer);
+  if (choice) {
+    return describeChoice(choice);
+  }
+
+  return answer.trim() || "No response submitted";
+};
+
+const acceptedAnswerDescriptions = (question: QuestionDetail): string[] =>
+  question.correctAnswers.map((answer) => answerDescription(question, answer));
+
+const plainRationale = (question: QuestionDetail): string =>
+  htmlToPlainText(question.rationaleHtml) ||
+  "No built-in rationale was supplied for this question.";
+
+export const localCoachSummary = (
+  question: QuestionDetail,
+  response: string,
+): string => {
+  const accepted = acceptedAnswerDescriptions(question);
+  const answerLabel = accepted.length === 1 ? "Accepted answer" : "Accepted answers";
+
+  return (
+    `Focus on ${question.skill}. You answered ${answerDescription(question, response)}. ` +
+    `${answerLabel}: ${accepted.join(" or ")}. ${plainRationale(question)}`
+  );
+};
+
+const toApiPayload = ({ question, response }: CoachRequest): CoachApiPayload => {
+  const stimulus = htmlToPlainText(question.stimulusHtml);
+  const prompt = htmlToPlainText(question.promptHtml);
+
+  return {
+    question: [stimulus, prompt].filter(Boolean).join("\n\n"),
+    choices: question.choices.map(describeChoice),
+    selectedAnswer: answerDescription(question, response),
+    correctAnswers: acceptedAnswerDescriptions(question),
+    topic: `${question.domain} — ${question.skill}`,
+    rationale: plainRationale(question),
+  };
+};
 
 const isCoachApiResult = (value: unknown): value is CoachApiResult => {
   if (typeof value !== "object" || value === null || !("available" in value)) {
@@ -73,12 +104,18 @@ const isCoachApiResult = (value: unknown): value is CoachApiResult => {
   );
 };
 
+const isAbortError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "name" in error &&
+  error.name === "AbortError";
+
 export const requestCoachSummary = async (
   request: CoachRequest,
   signal: AbortSignal,
   fetchImpl: FetchLike = fetch,
 ): Promise<string> => {
-  const fallback = localCoachSummary(request.question, request.selectedIndex);
+  const fallback = localCoachSummary(request.question, request.response);
 
   try {
     const response = await fetchImpl("/api/explain", {
@@ -96,7 +133,10 @@ export const requestCoachSummary = async (
     return isCoachApiResult(result) && result.available
       ? result.summary.trim()
       : fallback;
-  } catch {
+  } catch (error) {
+    if (signal.aborted || isAbortError(error)) {
+      throw error;
+    }
     return fallback;
   }
 };

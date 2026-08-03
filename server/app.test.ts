@@ -31,9 +31,13 @@ describe("coach API", () => {
     return `http://127.0.0.1:${address.port}`;
   };
 
-  it("rejects malformed coach requests without calling the model", async () => {
+  const startServer = async () => {
     server = createApiApp().listen(0, "127.0.0.1");
     await new Promise((resolve) => server?.once("listening", resolve));
+  };
+
+  it("rejects malformed coach requests without calling the model", async () => {
+    await startServer();
 
     const response = await fetch(`${apiUrl()}/api/explain`, {
       method: "POST",
@@ -45,21 +49,36 @@ describe("coach API", () => {
     expect(await response.json()).toEqual({ error: "Invalid coach request." });
   });
 
-  it("reports AI as optional when no server key is configured", async () => {
-    server = createApiApp().listen(0, "127.0.0.1");
-    await new Promise((resolve) => server?.once("listening", resolve));
+  it.each([
+    {
+      label: "an SPR with no choices",
+      payload: {
+        question: "Enter one-half as a decimal or fraction.",
+        choices: [],
+        selectedAnswer: "0.4",
+        correctAnswers: ["0.5", "1/2"],
+        topic: "Advanced Math — Equivalent expressions",
+        rationale: "One-half is equivalent to 0.5.",
+      },
+    },
+    {
+      label: "an MCQ with fewer than four choices",
+      payload: {
+        question: "Solve x + 2 = 5.",
+        choices: ["A: 1", "B: 3"],
+        selectedAnswer: "A: 1",
+        correctAnswers: ["B: 3"],
+        topic: "Algebra — Linear equations",
+        rationale: "Subtract 2 from both sides.",
+      },
+    },
+  ])("accepts $label", async ({ payload }) => {
+    await startServer();
 
     const response = await fetch(`${apiUrl()}/api/explain`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        question: "Solve x + 2 = 5.",
-        choices: ["1", "2", "3", "4"],
-        selectedAnswer: "1",
-        correctAnswer: "3",
-        topic: "Algebra — Linear equations",
-        rationale: "Subtract 2 from both sides.",
-      }),
+      body: JSON.stringify(payload),
     });
 
     expect(response.status).toBe(503);
