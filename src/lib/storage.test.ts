@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Question } from "../types";
 import { initialPracticeState } from "./practice";
 import {
   PRACTICE_STORAGE_KEY,
@@ -19,14 +20,28 @@ const memoryStorage = (value: string | null = null): StorageLike & {
   },
 });
 
+const questions: Question[] = [
+  {
+    id: "q-1",
+    section: "math",
+    domain: "Algebra",
+    skill: "Linear equations",
+    difficulty: "medium",
+    prompt: "Solve x + 2 = 5.",
+    choices: ["1", "2", "3", "4"],
+    answerIndex: 2,
+    explanation: "Subtract 2 from both sides.",
+  },
+];
+
 describe("loadPracticeState", () => {
   it("falls back safely for invalid JSON", () => {
-    expect(loadPracticeState(memoryStorage("{"), new Set(["q-1"]))).toEqual(
+    expect(loadPracticeState(memoryStorage("{"), questions)).toEqual(
       initialPracticeState(),
     );
   });
 
-  it("normalizes duplicates, malformed attempts, and orphaned question ids", () => {
+  it("recomputes correctness and rebuilds mistake memory from attempts", () => {
     const storage = memoryStorage(
       JSON.stringify({
         version: 1,
@@ -34,7 +49,55 @@ describe("loadPracticeState", () => {
           {
             id: "a-1",
             questionId: "q-1",
+            selectedIndex: 0,
+            correct: true,
+            createdAt: "2026-08-03T00:00:00.000Z",
+          },
+          {
+            id: "a-2",
+            questionId: "q-1",
             selectedIndex: 2,
+            correct: false,
+            createdAt: "2026-08-03T00:01:00.000Z",
+          },
+        ],
+        unresolvedIds: ["q-1"],
+        missedHistoryIds: [],
+      }),
+    );
+
+    expect(loadPracticeState(storage, questions)).toEqual({
+      version: 1,
+      attempts: [
+        {
+          id: "a-1",
+          questionId: "q-1",
+          selectedIndex: 0,
+          correct: false,
+          createdAt: "2026-08-03T00:00:00.000Z",
+        },
+        {
+          id: "a-2",
+          questionId: "q-1",
+          selectedIndex: 2,
+          correct: true,
+          createdAt: "2026-08-03T00:01:00.000Z",
+        },
+      ],
+      unresolvedIds: [],
+      missedHistoryIds: ["q-1"],
+    });
+  });
+
+  it("drops duplicate, malformed, and orphaned attempts before replay", () => {
+    const storage = memoryStorage(
+      JSON.stringify({
+        version: 1,
+        attempts: [
+          {
+            id: "a-1",
+            questionId: "q-1",
+            selectedIndex: 0,
             correct: true,
             createdAt: "2026-08-03T00:00:00.000Z",
           },
@@ -43,7 +106,7 @@ describe("loadPracticeState", () => {
             questionId: "q-1",
             selectedIndex: 2,
             correct: true,
-            createdAt: "2026-08-03T00:00:00.000Z",
+            createdAt: "2026-08-03T00:01:00.000Z",
           },
           { id: "bad", questionId: "q-1", selectedIndex: -1 },
           {
@@ -51,22 +114,22 @@ describe("loadPracticeState", () => {
             questionId: "old-question",
             selectedIndex: 0,
             correct: false,
-            createdAt: "2026-08-03T00:00:00.000Z",
+            createdAt: "2026-08-03T00:02:00.000Z",
           },
         ],
-        unresolvedIds: ["q-1", "q-1", "old-question"],
-        missedHistoryIds: ["q-1", "q-1", "old-question"],
+        unresolvedIds: [],
+        missedHistoryIds: [],
       }),
     );
 
-    expect(loadPracticeState(storage, new Set(["q-1"]))).toEqual({
+    expect(loadPracticeState(storage, questions)).toEqual({
       version: 1,
       attempts: [
         {
           id: "a-1",
           questionId: "q-1",
-          selectedIndex: 2,
-          correct: true,
+          selectedIndex: 0,
+          correct: false,
           createdAt: "2026-08-03T00:00:00.000Z",
         },
       ],
@@ -85,7 +148,7 @@ describe("loadPracticeState", () => {
       },
     };
 
-    expect(loadPracticeState(throwing, new Set(["q-1"]))).toEqual(
+    expect(loadPracticeState(throwing, questions)).toEqual(
       initialPracticeState(),
     );
     expect(savePracticeState(throwing, initialPracticeState())).toBe(false);
@@ -101,4 +164,3 @@ describe("savePracticeState", () => {
     expect(storage.getItem(PRACTICE_STORAGE_KEY)).toBe(storage.current);
   });
 });
-

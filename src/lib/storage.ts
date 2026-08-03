@@ -1,5 +1,5 @@
-import type { Attempt, PracticeState } from "../types";
-import { initialPracticeState } from "./practice";
+import type { Attempt, PracticeState, Question } from "../types";
+import { initialPracticeState, recordAttempt } from "./practice";
 
 export const PRACTICE_STORAGE_KEY = "sat-practice-state";
 
@@ -10,7 +10,7 @@ export type StorageLike = {
 
 export function loadPracticeState(
   storage: StorageLike,
-  validQuestionIds: ReadonlySet<string>,
+  questions: readonly Question[],
 ): PracticeState {
   try {
     const stored = storage.getItem(PRACTICE_STORAGE_KEY);
@@ -23,18 +23,12 @@ export function loadPracticeState(
       return initialPracticeState();
     }
 
-    return {
-      version: 1,
-      attempts: normalizeAttempts(parsed.attempts, validQuestionIds),
-      unresolvedIds: normalizeQuestionIds(
-        parsed.unresolvedIds,
-        validQuestionIds,
-      ),
-      missedHistoryIds: normalizeQuestionIds(
-        parsed.missedHistoryIds,
-        validQuestionIds,
-      ),
-    };
+    const questionsById = new Map(
+      questions.map((question) => [question.id, question]),
+    );
+    const attempts = normalizeAttempts(parsed.attempts, questionsById);
+
+    return attempts.reduce(recordAttempt, initialPracticeState());
   } catch {
     return initialPracticeState();
   }
@@ -71,22 +65,26 @@ function isPracticeStateDocument(value: unknown): value is StoredPracticeState {
 
 function normalizeAttempts(
   values: readonly unknown[],
-  validQuestionIds: ReadonlySet<string>,
+  questionsById: ReadonlyMap<string, Question>,
 ): Attempt[] {
   const attempts: Attempt[] = [];
   const seenIds = new Set<string>();
 
   for (const value of values) {
-    if (
-      !isAttempt(value) ||
-      !validQuestionIds.has(value.questionId) ||
-      seenIds.has(value.id)
-    ) {
+    if (!isAttempt(value) || seenIds.has(value.id)) {
+      continue;
+    }
+
+    const question = questionsById.get(value.questionId);
+    if (!question) {
       continue;
     }
 
     seenIds.add(value.id);
-    attempts.push(value);
+    attempts.push({
+      ...value,
+      correct: value.selectedIndex === question.answerIndex,
+    });
   }
 
   return attempts;
@@ -111,29 +109,6 @@ function isAttempt(value: unknown): value is Attempt {
     value.createdAt.trim().length > 0 &&
     !Number.isNaN(Date.parse(value.createdAt))
   );
-}
-
-function normalizeQuestionIds(
-  values: readonly unknown[],
-  validQuestionIds: ReadonlySet<string>,
-): string[] {
-  const ids: string[] = [];
-  const seenIds = new Set<string>();
-
-  for (const value of values) {
-    if (
-      typeof value !== "string" ||
-      !validQuestionIds.has(value) ||
-      seenIds.has(value)
-    ) {
-      continue;
-    }
-
-    seenIds.add(value);
-    ids.push(value);
-  }
-
-  return ids;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
