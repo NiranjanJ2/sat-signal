@@ -293,7 +293,7 @@ describe("fetchQuestionDetail", () => {
     );
   });
 
-  it("normalizes nullable standard SPR fields", async () => {
+  it("normalizes omitted standard SPR answer options", async () => {
     const meta: QuestionMeta = {
       ...standardMeta,
       id: "spr-id",
@@ -306,7 +306,6 @@ describe("fetchQuestionDetail", () => {
         stimulus: null,
         stem: "<p>Enter a value.</p>",
         rationale: "<p>The answer is one half.</p>",
-        answerOptions: null,
         keys: ["1/2"],
         correct_answer: ["0.5"],
       }),

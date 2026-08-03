@@ -349,7 +349,10 @@ function parseStandardChoices(
   value: unknown,
   kind: QuestionDetail["kind"],
 ): QuestionChoice[] {
-  if (value === null && kind === "student-produced-response") {
+  if (
+    (value === null || value === undefined) &&
+    kind === "student-produced-response"
+  ) {
     return [];
   }
   if (!Array.isArray(value)) {
