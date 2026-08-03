@@ -1,15 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Attempt } from "../src/types";
 
 export type ProgressDocument = {
   version: 2;
+  generation: number;
   attempts: Attempt[];
 };
 
 export const DEFAULT_PROGRESS_FILE = path.resolve(
-  process.cwd(),
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
   ".sat-signal",
   "progress.json",
 );
@@ -24,6 +27,13 @@ export class InvalidProgressDocumentError extends Error {
   }
 }
 
+export class ProgressGenerationConflictError extends Error {
+  constructor(readonly current: ProgressDocument) {
+    super("Progress generation is stale.");
+    this.name = "ProgressGenerationConflictError";
+  }
+}
+
 export class ProgressStore {
   private queue: Promise<void> = Promise.resolve();
 
@@ -33,36 +43,64 @@ export class ProgressStore {
     return this.enqueue(() => this.readFromDisk());
   }
 
-  write(value: unknown): Promise<void> {
-    let document: ProgressDocument;
+  import(value: unknown): Promise<ProgressDocument> {
+    let imported: ProgressDocument;
     try {
-      document = normalizeProgressDocument(value);
+      imported = normalizeImportDocument(value);
     } catch (error) {
       return Promise.reject(error);
     }
 
     return this.enqueue(async () => {
-      // Refuse to replace an unreadable file. This preserves the evidence needed
-      // to recover it instead of silently resetting a student's history.
-      await this.readFromDisk();
-
-      const directory = path.dirname(this.filePath);
-      const temporaryFile = path.join(
-        directory,
-        `.${path.basename(this.filePath)}.${process.pid}.${randomUUID()}.tmp`,
-      );
-
-      await mkdir(directory, { recursive: true });
-      try {
-        await writeFile(temporaryFile, JSON.stringify(document), {
-          encoding: "utf8",
-          flag: "wx",
-        });
-        await rename(temporaryFile, this.filePath);
-      } catch (error) {
-        await unlink(temporaryFile).catch(() => undefined);
-        throw error;
+      const current = await this.readFromDisk();
+      if (imported.generation !== current.generation) {
+        throw new ProgressGenerationConflictError(current);
       }
+
+      const merged = {
+        ...current,
+        attempts: unionAttempts(current.attempts, imported.attempts),
+      };
+      if (merged.attempts.length !== current.attempts.length) {
+        await this.writeToDisk(merged);
+      }
+      return merged;
+    });
+  }
+
+  append(value: unknown): Promise<ProgressDocument> {
+    let attempt: Attempt;
+    try {
+      attempt = normalizeAttempt(value, "input");
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    return this.enqueue(async () => {
+      const current = await this.readFromDisk();
+      if (current.attempts.some(({ id }) => id === attempt.id)) {
+        return current;
+      }
+
+      const updated = {
+        ...current,
+        attempts: [...current.attempts, attempt],
+      };
+      await this.writeToDisk(updated);
+      return updated;
+    });
+  }
+
+  reset(): Promise<ProgressDocument> {
+    return this.enqueue(async () => {
+      const current = await this.readFromDisk();
+      const reset = {
+        version: 2 as const,
+        generation: current.generation + 1,
+        attempts: [],
+      };
+      await this.writeToDisk(reset);
+      return reset;
     });
   }
 
@@ -81,13 +119,13 @@ export class ProgressStore {
       contents = await readFile(this.filePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: 2, attempts: [] };
+        return { version: 2, generation: 0, attempts: [] };
       }
       throw error;
     }
 
     try {
-      return normalizeProgressDocument(JSON.parse(contents), "disk");
+      return normalizeDiskDocument(JSON.parse(contents));
     } catch (error) {
       if (error instanceof InvalidProgressDocumentError) {
         throw error;
@@ -98,21 +136,71 @@ export class ProgressStore {
       );
     }
   }
+
+  private async writeToDisk(document: ProgressDocument): Promise<void> {
+    const directory = path.dirname(this.filePath);
+    const temporaryFile = path.join(
+      directory,
+      `.${path.basename(this.filePath)}.${process.pid}.${randomUUID()}.tmp`,
+    );
+
+    await mkdir(directory, { recursive: true });
+    try {
+      await writeFile(temporaryFile, JSON.stringify(document), {
+        encoding: "utf8",
+        flag: "wx",
+        flush: true,
+      });
+      await rename(temporaryFile, this.filePath);
+    } catch (error) {
+      await unlink(temporaryFile).catch(() => undefined);
+      throw error;
+    }
+  }
 }
 
-function normalizeProgressDocument(
-  value: unknown,
-  source: "input" | "disk" = "input",
-): ProgressDocument {
-  if (!isRecord(value) || value.version !== 2 || !Array.isArray(value.attempts)) {
+function normalizeImportDocument(value: unknown): ProgressDocument {
+  if (
+    !isRecord(value) ||
+    value.version !== 2 ||
+    !isGeneration(value.generation) ||
+    !Array.isArray(value.attempts)
+  ) {
     throw new InvalidProgressDocumentError(
-      "Progress must be a version 2 document containing attempts.",
-      source,
+      "Progress import must include version, generation, and attempts.",
+      "input",
     );
   }
 
-  const attempts = value.attempts.map((attempt) => normalizeAttempt(attempt, source));
-  return { version: 2, attempts };
+  return {
+    version: 2,
+    generation: value.generation,
+    attempts: uniqueAttempts(
+      value.attempts.map((attempt) => normalizeAttempt(attempt, "input")),
+    ),
+  };
+}
+
+function normalizeDiskDocument(value: unknown): ProgressDocument {
+  if (
+    !isRecord(value) ||
+    value.version !== 2 ||
+    !Array.isArray(value.attempts) ||
+    (value.generation !== undefined && !isGeneration(value.generation))
+  ) {
+    throw new InvalidProgressDocumentError(
+      "Stored progress has an invalid shape.",
+      "disk",
+    );
+  }
+
+  return {
+    version: 2,
+    generation: value.generation ?? 0,
+    attempts: uniqueAttempts(
+      value.attempts.map((attempt) => normalizeAttempt(attempt, "disk")),
+    ),
+  };
 }
 
 function normalizeAttempt(value: unknown, source: "input" | "disk"): Attempt {
@@ -138,6 +226,26 @@ function normalizeAttempt(value: unknown, source: "input" | "disk"): Attempt {
     correct: value.correct,
     createdAt: value.createdAt,
   };
+}
+
+function unionAttempts(
+  current: readonly Attempt[],
+  imported: readonly Attempt[],
+): Attempt[] {
+  return uniqueAttempts([...current, ...imported]);
+}
+
+function uniqueAttempts(attempts: readonly Attempt[]): Attempt[] {
+  const ids = new Set<string>();
+  return attempts.filter(({ id }) => {
+    if (ids.has(id)) return false;
+    ids.add(id);
+    return true;
+  });
+}
+
+function isGeneration(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 function isNonemptyString(value: unknown): value is string {

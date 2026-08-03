@@ -4,6 +4,7 @@ import { initialPracticeState } from "./practice";
 import {
   PRACTICE_STORAGE_KEY,
   hydratePracticeStateDocument,
+  loadPracticeSnapshot,
   loadPracticeState,
   mergePracticeStates,
   savePracticeState,
@@ -55,7 +56,7 @@ describe("loadPracticeState", () => {
     );
   });
 
-  it("drops malformed, duplicate, and orphaned attempts then rebuilds queues", () => {
+  it("drops malformed and duplicate attempts but preserves catalog-absent history", () => {
     const storage = memoryStorage(
       JSON.stringify({
         version: 2,
@@ -106,6 +107,13 @@ describe("loadPracticeState", () => {
           createdAt: "2026-08-03T00:00:00.000Z",
         },
         {
+          id: "orphan",
+          questionId: "removed-id",
+          response: "A",
+          correct: false,
+          createdAt: "2026-08-03T00:02:00.000Z",
+        },
+        {
           id: "a-2",
           questionId: "external-q-1",
           response: "C",
@@ -113,9 +121,41 @@ describe("loadPracticeState", () => {
           createdAt: "2026-08-03T00:03:00.000Z",
         },
       ],
-      unresolvedIds: [],
-      missedHistoryIds: ["external-q-1"],
+      unresolvedIds: ["removed-id"],
+      missedHistoryIds: ["external-q-1", "removed-id"],
     });
+  });
+
+  it("preserves seen history across catalog omission, save, and reappearance", () => {
+    const original = memoryStorage(
+      JSON.stringify({
+        version: 2,
+        attempts: [
+          {
+            id: "temporarily-missing-attempt",
+            questionId: "temporarily-missing-question",
+            response: "D",
+            correct: true,
+            createdAt: "2026-08-03T00:04:00.000Z",
+          },
+        ],
+      }),
+    );
+    const whileMissing = loadPracticeState(original, catalog);
+    const saved = memoryStorage();
+
+    expect(savePracticeState(saved, whileMissing)).toBe(true);
+
+    const afterReappearance = loadPracticeState(saved, [
+      ...catalog,
+      { ...catalog[0], id: "temporarily-missing-question" },
+    ]);
+    expect(afterReappearance.attempts).toEqual([
+      expect.objectContaining({
+        id: "temporarily-missing-attempt",
+        questionId: "temporarily-missing-question",
+      }),
+    ]);
   });
 
   it("survives storage access and quota errors", () => {
@@ -134,7 +174,7 @@ describe("loadPracticeState", () => {
 });
 
 describe("hydratePracticeStateDocument", () => {
-  it("validates a raw server document against the live catalog", () => {
+  it("validates a raw server document without discarding catalog-absent history", () => {
     expect(
       hydratePracticeStateDocument(
         {
@@ -159,10 +199,34 @@ describe("hydratePracticeStateDocument", () => {
         catalog,
       ),
     ).toMatchObject({
-      attempts: [{ id: "server-attempt" }],
+      attempts: [{ id: "server-attempt" }, { id: "orphan" }],
       unresolvedIds: ["external-q-1"],
     });
   });
+});
+
+describe("loadPracticeSnapshot", () => {
+  it("returns a valid nonnegative document generation", () => {
+    const storage = memoryStorage(
+      JSON.stringify({ version: 2, generation: 7, attempts: [] }),
+    );
+
+    expect(loadPracticeSnapshot(storage, catalog)).toEqual({
+      state: initialPracticeState(),
+      generation: 7,
+    });
+  });
+
+  it.each([undefined, -1, 1.5, "7"])(
+    "treats generation %j as absent",
+    (generation) => {
+      const storage = memoryStorage(
+        JSON.stringify({ version: 2, generation, attempts: [] }),
+      );
+
+      expect(loadPracticeSnapshot(storage, catalog).generation).toBeNull();
+    },
+  );
 });
 
 describe("mergePracticeStates", () => {
@@ -226,5 +290,14 @@ describe("savePracticeState", () => {
     expect(storage.getItem(PRACTICE_STORAGE_KEY)).toBe(storage.current);
     expect(storage.current).not.toContain("rationale");
     expect(storage.current).not.toContain("answerOptions");
+  });
+
+  it("includes a valid generation when supplied", () => {
+    const storage = memoryStorage();
+
+    expect(savePracticeState(storage, initialPracticeState(), 12)).toBe(true);
+    expect(storage.current).toBe(
+      JSON.stringify({ version: 2, attempts: [], generation: 12 }),
+    );
   });
 });

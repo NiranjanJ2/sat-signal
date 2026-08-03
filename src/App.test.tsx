@@ -15,7 +15,9 @@ const coachMocks = vi.hoisted(() => ({
 
 const progressMocks = vi.hoisted(() => ({
   loadProgressDocument: vi.fn(),
-  saveProgressDocument: vi.fn(),
+  importProgressDocument: vi.fn(),
+  appendProgressAttempt: vi.fn(),
+  resetProgressDocument: vi.fn(),
 }));
 
 vi.mock("./lib/qbank", async (importOriginal) => {
@@ -33,7 +35,10 @@ vi.mock("./lib/coach", () => ({
   requestCoachSummary: coachMocks.requestCoachSummary,
 }));
 
-vi.mock("./lib/progress", () => progressMocks);
+vi.mock("./lib/progress", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/progress")>()),
+  ...progressMocks,
+}));
 
 const catalog: QuestionMeta[] = [
   {
@@ -99,12 +104,19 @@ describe("SAT practice app", () => {
     qbankMocks.fetchQuestionDetail.mockReset();
     coachMocks.requestCoachSummary.mockReset();
     progressMocks.loadProgressDocument.mockReset();
-    progressMocks.saveProgressDocument.mockReset();
+    progressMocks.importProgressDocument.mockReset();
+    progressMocks.appendProgressAttempt.mockReset();
+    progressMocks.resetProgressDocument.mockReset();
     progressMocks.loadProgressDocument.mockResolvedValue({
       available: true,
-      document: { version: 2, attempts: [] },
+      document: { version: 2, generation: 0, attempts: [] },
     });
-    progressMocks.saveProgressDocument.mockResolvedValue(true);
+    progressMocks.importProgressDocument.mockResolvedValue("saved");
+    progressMocks.appendProgressAttempt.mockResolvedValue(true);
+    progressMocks.resetProgressDocument.mockResolvedValue({
+      available: true,
+      document: { version: 2, generation: 1, attempts: [] },
+    });
   });
 
   it("loads the current question, prefetches one lookahead, and advances from memory", async () => {
@@ -246,6 +258,24 @@ describe("SAT practice app", () => {
     expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(3);
   });
 
+  it("does not reopen an attempted question after a navigation round trip", async () => {
+    prepareSuccess();
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^review$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^practice$/i }));
+
+    expect(
+      await screen.findByRole("heading", { name: /what is the value of x/i }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: /which choice best states/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("records one persistent miss without storing question content and auto-opens coaching", async () => {
     prepareSuccess();
     render(<App />);
@@ -266,6 +296,11 @@ describe("SAT practice app", () => {
     expect(saved.attempts).toHaveLength(1);
     expect(raw).not.toContain("Which choice");
     expect(raw).not.toContain("rationale");
+    await waitFor(() =>
+      expect(progressMocks.appendProgressAttempt).toHaveBeenCalledWith(
+        expect.objectContaining({ questionId: "rw-1", correct: false }),
+      ),
+    );
   });
 
   it("supports skill filters and student-produced responses", async () => {
@@ -321,6 +356,7 @@ describe("SAT practice app", () => {
       available: true,
       document: {
         version: 2,
+        generation: 0,
         attempts: [
           {
             id: "server-attempt",
@@ -346,12 +382,90 @@ describe("SAT practice app", () => {
     expect(within(row).getByText(/1 attempt/i)).toBeVisible();
     expect(within(row).getByText(/0%/i)).toBeVisible();
     await waitFor(() =>
-      expect(progressMocks.saveProgressDocument).toHaveBeenCalledWith(
+      expect(progressMocks.importProgressDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           attempts: [expect.objectContaining({ id: "server-attempt" })],
         }),
+        0,
       ),
     );
+  });
+
+  it("does not resurrect browser history from before a durable reset", async () => {
+    prepareSuccess();
+    window.localStorage.setItem(
+      PRACTICE_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        generation: 0,
+        attempts: [
+          {
+            id: "stale-browser-attempt",
+            questionId: "rw-1",
+            response: "A",
+            correct: true,
+            createdAt: "2026-08-03T12:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    progressMocks.loadProgressDocument.mockResolvedValue({
+      available: true,
+      document: { version: 2, generation: 1, attempts: [] },
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: /which choice best states/i }),
+    ).toBeVisible();
+    expect(progressMocks.importProgressDocument).not.toHaveBeenCalled();
+    expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}")).toEqual({
+      version: 2,
+      attempts: [],
+      generation: 1,
+    });
+  });
+
+  it("keeps progress intact when the durable reset fails", async () => {
+    prepareSuccess();
+    progressMocks.resetProgressDocument.mockResolvedValue({ available: false });
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^reset$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reset everything/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /nothing was erased/i,
+    );
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+    const saved = JSON.parse(
+      window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}",
+    ) as { attempts?: unknown[] };
+    expect(saved.attempts).toHaveLength(1);
+  });
+
+  it("commits a reset only after disk returns a new generation", async () => {
+    prepareSuccess();
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^reset$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reset everything/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+    expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}")).toEqual({
+      version: 2,
+      attempts: [],
+      generation: 1,
+    });
   });
 
   it("keeps stale question details from replacing the current question", async () => {

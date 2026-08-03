@@ -8,34 +8,51 @@ export type StorageLike = {
   setItem(key: string, value: string): void;
 };
 
+export type PracticeSnapshot = {
+  state: PracticeState;
+  generation: number | null;
+};
+
 export function loadPracticeState(
   storage: StorageLike,
   questions: readonly QuestionMeta[],
 ): PracticeState {
+  return loadPracticeSnapshot(storage, questions).state;
+}
+
+export function loadPracticeSnapshot(
+  storage: StorageLike,
+  questions: readonly QuestionMeta[],
+): PracticeSnapshot {
   try {
     const stored = storage.getItem(PRACTICE_STORAGE_KEY);
     if (stored === null) {
-      return initialPracticeState();
+      return emptySnapshot();
     }
 
-    return hydratePracticeStateDocument(JSON.parse(stored), questions);
+    const document: unknown = JSON.parse(stored);
+    if (!isPracticeStateDocument(document)) {
+      return emptySnapshot();
+    }
+
+    return {
+      state: hydratePracticeStateDocument(document, questions),
+      generation: normalizeGeneration(document.generation),
+    };
   } catch {
-    return initialPracticeState();
+    return emptySnapshot();
   }
 }
 
 export function hydratePracticeStateDocument(
   value: unknown,
-  questions: readonly QuestionMeta[],
+  _questions: readonly QuestionMeta[],
 ): PracticeState {
   if (!isPracticeStateDocument(value)) {
     return initialPracticeState();
   }
 
-  const questionsById = new Map(
-    questions.map((question) => [question.id, question]),
-  );
-  const attempts = normalizeAttempts(value.attempts, questionsById);
+  const attempts = normalizeAttempts(value.attempts);
 
   return attempts.reduce(recordAttempt, initialPracticeState());
 }
@@ -68,11 +85,22 @@ export function mergePracticeStates(
 export function savePracticeState(
   storage: StorageLike,
   state: PracticeState,
+  generation?: number | null,
 ): boolean {
   try {
+    const document: {
+      version: 2;
+      attempts: Attempt[];
+      generation?: number;
+    } = { version: 2, attempts: state.attempts };
+    const validGeneration = normalizeGeneration(generation);
+    if (validGeneration !== null) {
+      document.generation = validGeneration;
+    }
+
     storage.setItem(
       PRACTICE_STORAGE_KEY,
-      JSON.stringify({ version: 2, attempts: state.attempts }),
+      JSON.stringify(document),
     );
     return true;
   } catch {
@@ -83,6 +111,7 @@ export function savePracticeState(
 type StoredPracticeState = {
   version: 2;
   attempts: unknown[];
+  generation?: unknown;
 };
 
 function isPracticeStateDocument(value: unknown): value is StoredPracticeState {
@@ -95,7 +124,6 @@ function isPracticeStateDocument(value: unknown): value is StoredPracticeState {
 
 function normalizeAttempts(
   values: readonly unknown[],
-  questionsById: ReadonlyMap<string, QuestionMeta>,
 ): Attempt[] {
   const attempts: Attempt[] = [];
   const seenIds = new Set<string>();
@@ -105,16 +133,21 @@ function normalizeAttempts(
       continue;
     }
 
-    const question = questionsById.get(value.questionId);
-    if (!question) {
-      continue;
-    }
-
     seenIds.add(value.id);
     attempts.push(value);
   }
 
   return attempts;
+}
+
+function emptySnapshot(): PracticeSnapshot {
+  return { state: initialPracticeState(), generation: null };
+}
+
+function normalizeGeneration(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
 }
 
 function isAttempt(value: unknown): value is Attempt {

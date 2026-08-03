@@ -14,10 +14,16 @@ import {
   initialPracticeState,
   recordAttempt,
 } from "./lib/practice";
-import { loadProgressDocument, saveProgressDocument } from "./lib/progress";
+import {
+  appendProgressAttempt,
+  importProgressDocument,
+  loadProgressDocument,
+  progressGeneration,
+  resetProgressDocument,
+} from "./lib/progress";
 import {
   hydratePracticeStateDocument,
-  loadPracticeState,
+  loadPracticeSnapshot,
   mergePracticeStates,
   savePracticeState,
   type StorageLike,
@@ -148,6 +154,7 @@ export default function App() {
   const detailCacheRef = useRef(new Map<string, QuestionDetail>());
   const detailRequestsRef = useRef(new Map<string, DetailRequest>());
   const progressWritableRef = useRef(false);
+  const progressGenerationRef = useRef<number | null>(null);
   const progressSaveRef = useRef<Promise<void>>(Promise.resolve());
 
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
@@ -162,6 +169,8 @@ export default function App() {
   const [detailRetry, setDetailRetry] = useState(0);
   const [detailState, setDetailState] = useState<DetailState>({ status: "idle" });
   const [resetOpen, setResetOpen] = useState(false);
+  const [resetSaving, setResetSaving] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
   const resetCancelRef = useRef<HTMLButtonElement>(null);
 
   const abortAllDetailRequests = useCallback(() => {
@@ -171,18 +180,28 @@ export default function App() {
     detailRequestsRef.current.clear();
   }, []);
 
-  const persistPracticeState = useCallback((state: PracticeState) => {
-    savePracticeState(storageRef.current, state);
-    if (!progressWritableRef.current) {
-      return;
-    }
-
-    progressSaveRef.current = progressSaveRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        await saveProgressDocument(state);
-      });
+  const queueProgressOperation = useCallback(<T,>(operation: () => Promise<T>) => {
+    const result = progressSaveRef.current.then(operation, operation);
+    progressSaveRef.current = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }, []);
+
+  const persistAttempt = useCallback(
+    (state: PracticeState, attempt: Attempt) => {
+      savePracticeState(
+        storageRef.current,
+        state,
+        progressGenerationRef.current,
+      );
+      if (progressWritableRef.current) {
+        void queueProgressOperation(() => appendProgressAttempt(attempt));
+      }
+    },
+    [queueProgressOperation],
+  );
 
   const requestQuestionDetail = useCallback((meta: QuestionMeta) => {
     const cachedQuestion = detailCacheRef.current.get(meta.id);
@@ -235,23 +254,47 @@ export default function App() {
           return;
         }
 
-        const browserState = loadPracticeState(storageRef.current, nextCatalog);
-        const nextPracticeState = progressResult.available
-          ? mergePracticeStates(
-              hydratePracticeStateDocument(progressResult.document, nextCatalog),
-              browserState,
-            )
-          : browserState;
+        const browserSnapshot = loadPracticeSnapshot(
+          storageRef.current,
+          nextCatalog,
+        );
+        const serverGeneration = progressResult.available
+          ? progressGeneration(progressResult.document)
+          : null;
+        const canMergeBrowser =
+          serverGeneration !== null &&
+          (browserSnapshot.generation === serverGeneration ||
+            (serverGeneration === 0 && browserSnapshot.generation === null));
+        const serverState = progressResult.available
+          ? hydratePracticeStateDocument(progressResult.document, nextCatalog)
+          : initialPracticeState();
+        const nextPracticeState =
+          serverGeneration === null
+            ? browserSnapshot.state
+            : canMergeBrowser
+              ? mergePracticeStates(serverState, browserSnapshot.state)
+              : serverState;
         const nextPool = filterQuestions(
           nextCatalog,
           DEFAULT_FILTERS,
           nextPracticeState,
         );
 
-        progressWritableRef.current = progressResult.available;
+        progressWritableRef.current = serverGeneration !== null;
+        progressGenerationRef.current =
+          serverGeneration ?? browserSnapshot.generation;
         setCatalog(nextCatalog);
         setPracticeState(nextPracticeState);
-        persistPracticeState(nextPracticeState);
+        savePracticeState(
+          storageRef.current,
+          nextPracticeState,
+          progressGenerationRef.current,
+        );
+        if (serverGeneration !== null && canMergeBrowser) {
+          void queueProgressOperation(() =>
+            importProgressDocument(nextPracticeState, serverGeneration),
+          );
+        }
         setCurrentQuestionId(nextPool[0]?.id ?? null);
         setQuestionEpoch((epoch) => epoch + 1);
         setCatalogStatus("ready");
@@ -261,7 +304,7 @@ export default function App() {
           setCatalogStatus("error");
         }
       });
-  }, [abortAllDetailRequests, persistPracticeState]);
+  }, [abortAllDetailRequests, queueProgressOperation]);
 
   useEffect(() => {
     startCatalogLoad();
@@ -445,7 +488,7 @@ export default function App() {
     };
     const nextState = recordAttempt(practiceState, attempt);
     setPracticeState(nextState);
-    persistPracticeState(nextState);
+    persistAttempt(nextState, attempt);
     return correct;
   };
 
@@ -453,14 +496,40 @@ export default function App() {
     activateQuestion(nextQuestionInPool(pool, currentQuestionId));
   };
 
-  const confirmReset = () => {
+  const confirmReset = async () => {
+    setResetSaving(true);
+    setResetError(null);
+    const result = await queueProgressOperation(resetProgressDocument);
+    const nextGeneration = result.available
+      ? progressGeneration(result.document)
+      : null;
+    if (nextGeneration === null) {
+      setResetSaving(false);
+      setResetError("Progress could not be reset on disk. Nothing was erased; try again.");
+      return;
+    }
+
     const nextState = initialPracticeState();
+    progressWritableRef.current = true;
+    progressGenerationRef.current = nextGeneration;
     setPracticeState(nextState);
-    persistPracticeState(nextState);
+    savePracticeState(storageRef.current, nextState, nextGeneration);
+    setResetSaving(false);
     setResetOpen(false);
     setView("practice");
     setFilters(DEFAULT_FILTERS);
     choosePoolStart(DEFAULT_FILTERS, nextState);
+  };
+
+  const changeView = (nextView: ViewMode) => {
+    if (
+      nextView === "practice" &&
+      view !== "practice" &&
+      !pool.some((question) => question.id === currentQuestionId)
+    ) {
+      activateQuestion(pool[0]);
+    }
+    setView(nextView);
   };
 
   return (
@@ -478,7 +547,7 @@ export default function App() {
               className={view === item ? "is-active" : ""}
               aria-current={view === item ? "page" : undefined}
               key={item}
-              onClick={() => setView(item)}
+              onClick={() => changeView(item)}
               disabled={catalogStatus !== "ready"}
             >
               {item[0].toUpperCase() + item.slice(1)}
@@ -492,7 +561,10 @@ export default function App() {
             className="reset-trigger"
             type="button"
             disabled={catalogStatus !== "ready"}
-            onClick={() => setResetOpen(true)}
+            onClick={() => {
+              setResetError(null);
+              setResetOpen(true);
+            }}
           >
             Reset
           </button>
@@ -629,12 +701,13 @@ export default function App() {
             <p className="section-index">Reset progress</p>
             <h2 id="reset-title">Erase this memory trace?</h2>
             <p id="reset-description">This permanently clears attempts, unresolved misses, and miss history stored on this device.</p>
+            {resetError ? <p className="reset-error" role="alert">{resetError}</p> : null}
             <div className="dialog-actions">
-              <button className="button button-quiet" type="button" ref={resetCancelRef} onClick={() => setResetOpen(false)}>
+              <button className="button button-quiet" type="button" ref={resetCancelRef} disabled={resetSaving} onClick={() => setResetOpen(false)}>
                 Keep progress
               </button>
-              <button className="button button-danger" type="button" onClick={confirmReset}>
-                Reset everything
+              <button className="button button-danger" type="button" disabled={resetSaving} onClick={() => void confirmReset()}>
+                {resetSaving ? "Resetting…" : "Reset everything"}
               </button>
             </div>
           </section>

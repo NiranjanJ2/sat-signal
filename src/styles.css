@@ -1248,6 +1248,10 @@ main {
   line-height: 1.6;
 }
 
+.reset-dialog > .reset-error {
+  color: var(--incorrect);
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

@@ -4,6 +4,7 @@ import { generateCoachSummary } from "./coach";
 import {
   DEFAULT_PROGRESS_FILE,
   InvalidProgressDocumentError,
+  ProgressGenerationConflictError,
   ProgressStore,
 } from "./progress";
 
@@ -37,7 +38,7 @@ export function createApiApp(
   const progress = new ProgressStore(progressFile);
 
   app.disable("x-powered-by");
-  app.use("/api/progress", express.json({ limit: "2mb" }));
+  app.use("/api/progress/import", express.json({ limit: "2mb" }));
   app.use(express.json({ limit: "32kb" }));
   app.get("/api/progress", async (_request, response) => {
     try {
@@ -50,11 +51,18 @@ export function createApiApp(
       response.status(500).json({ error: message });
     }
   });
-  app.put("/api/progress", async (request, response) => {
+  app.post("/api/progress/import", async (request, response) => {
     try {
-      await progress.write(request.body);
-      response.status(204).end();
+      response.json(await progress.import(request.body));
     } catch (error) {
+      if (error instanceof ProgressGenerationConflictError) {
+        response.status(409).json({
+          error: "Progress generation is stale.",
+          current: error.current,
+        });
+        return;
+      }
+
       if (
         error instanceof InvalidProgressDocumentError &&
         error.source === "input"
@@ -68,6 +76,20 @@ export function createApiApp(
           ? "Stored progress is unreadable."
           : "Progress storage is unavailable.";
       response.status(500).json({ error: message });
+    }
+  });
+  app.post("/api/progress/attempt", async (request, response) => {
+    try {
+      response.json(await progress.append(request.body));
+    } catch (error) {
+      respondToProgressError(response, error);
+    }
+  });
+  app.delete("/api/progress", async (_request, response) => {
+    try {
+      response.json(await progress.reset());
+    } catch (error) {
+      respondToProgressError(response, error);
     }
   });
   app.post("/api/explain", async (request, response) => {
@@ -100,4 +122,23 @@ export function createApiApp(
   });
 
   return app;
+}
+
+function respondToProgressError(
+  response: express.Response,
+  error: unknown,
+): void {
+  if (
+    error instanceof InvalidProgressDocumentError &&
+    error.source === "input"
+  ) {
+    response.status(400).json({ error: "Invalid progress document." });
+    return;
+  }
+
+  const message =
+    error instanceof InvalidProgressDocumentError
+      ? "Stored progress is unreadable."
+      : "Progress storage is unavailable.";
+  response.status(500).json({ error: message });
 }

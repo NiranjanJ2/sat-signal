@@ -160,62 +160,82 @@ describe("progress API", () => {
     };
   };
 
-  it("returns empty progress when no JSON file exists", async () => {
+  const postJson = (url: string, body: unknown) =>
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  const attempt = {
+    id: "attempt-1",
+    questionId: "question-1",
+    response: "B",
+    correct: false,
+    createdAt: "2026-08-03T12:00:00.000Z",
+  };
+
+  it("returns generation zero and empty progress when no JSON file exists", async () => {
     const { baseUrl } = await startServer();
 
     const response = await fetch(`${baseUrl}/api/progress`);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ version: 2, attempts: [] });
+    expect(await response.json()).toEqual({
+      version: 2,
+      generation: 0,
+      attempts: [],
+    });
   });
 
-  it("validates and persists progress through PUT", async () => {
+  it("imports history then appends one attempt without replacing prior attempts", async () => {
     const { baseUrl, progressFile } = await startServer();
-    const body = {
-      version: 2,
-      attempts: [
-        {
-          id: "attempt-1",
-          questionId: "question-1",
-          response: "B",
-          correct: false,
-          createdAt: "2026-08-03T12:00:00.000Z",
-        },
-      ],
+    const secondAttempt = {
+      ...attempt,
+      id: "attempt-2",
+      questionId: "question-2",
+      correct: true,
     };
 
-    const putResponse = await fetch(`${baseUrl}/api/progress`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+    const imported = await postJson(`${baseUrl}/api/progress/import`, {
+      version: 2,
+      generation: 0,
+      attempts: [attempt],
+    });
+    expect(imported.status).toBe(200);
+    expect(await imported.json()).toEqual({
+      version: 2,
+      generation: 0,
+      attempts: [attempt],
     });
 
-    expect(putResponse.status).toBe(204);
-    expect(await readFile(progressFile, "utf8")).toBe(JSON.stringify(body));
-    const getResponse = await fetch(`${baseUrl}/api/progress`);
-    expect(await getResponse.json()).toEqual(body);
+    const appended = await postJson(
+      `${baseUrl}/api/progress/attempt`,
+      secondAttempt,
+    );
+    expect(appended.status).toBe(200);
+    expect(await appended.json()).toEqual({
+      version: 2,
+      generation: 0,
+      attempts: [attempt, secondAttempt],
+    });
+
+    expect(JSON.parse(await readFile(progressFile, "utf8"))).toEqual({
+      version: 2,
+      generation: 0,
+      attempts: [attempt, secondAttempt],
+    });
   });
 
-  it("loads the same progress document after the server restarts", async () => {
+  it("retains generation and history when the server restarts", async () => {
     const { baseUrl, progressFile } = await startServer();
-    const body = {
-      version: 2,
-      attempts: [
-        {
-          id: "restart-attempt",
-          questionId: "question-1",
-          response: "A",
-          correct: true,
-          createdAt: "2026-08-03T12:00:00.000Z",
-        },
-      ],
-    };
-    const saved = await fetch(`${baseUrl}/api/progress`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+    await postJson(`${baseUrl}/api/progress/attempt`, attempt);
+    const reset = await fetch(`${baseUrl}/api/progress`, { method: "DELETE" });
+    expect(reset.status).toBe(200);
+    await postJson(`${baseUrl}/api/progress/attempt`, {
+      ...attempt,
+      id: "after-reset",
     });
-    expect(saved.status).toBe(204);
 
     await new Promise<void>((resolve, reject) => {
       server?.close((error) => (error ? reject(error) : resolve()));
@@ -228,13 +248,18 @@ describe("progress API", () => {
       `http://127.0.0.1:${restartedAddress.port}/api/progress`,
     );
     expect(restored.status).toBe(200);
-    expect(await restored.json()).toEqual(body);
+    expect(await restored.json()).toEqual({
+      version: 2,
+      generation: 1,
+      attempts: [{ ...attempt, id: "after-reset" }],
+    });
   });
 
-  it("accepts a full practice history larger than the coach request limit", async () => {
+  it("accepts a full import larger than the attempt request limit", async () => {
     const { baseUrl } = await startServer();
     const body = {
       version: 2,
+      generation: 0,
       attempts: Array.from({ length: 400 }, (_, index) => ({
         id: `attempt-${index}`,
         questionId: `question-${index}`,
@@ -245,31 +270,57 @@ describe("progress API", () => {
     };
     expect(JSON.stringify(body).length).toBeGreaterThan(32 * 1024);
 
-    const response = await fetch(`${baseUrl}/api/progress`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const response = await postJson(`${baseUrl}/api/progress/import`, body);
 
-    expect(response.status).toBe(204);
+    expect(response.status).toBe(200);
     const stored = await fetch(`${baseUrl}/api/progress`);
     expect(await stored.json()).toEqual(body);
   });
 
-  it("rejects malformed progress without changing the stored document", async () => {
-    const { baseUrl, progressFile } = await startServer();
-    const original = { version: 2, attempts: [] };
-    await writeFile(progressFile, JSON.stringify(original), "utf8");
-
-    const response = await fetch(`${baseUrl}/api/progress`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ version: 2, attempts: [{ id: "bad" }] }),
+  it("returns conflict for a stale import after reset and leaves progress erased", async () => {
+    const { baseUrl } = await startServer();
+    await postJson(`${baseUrl}/api/progress/attempt`, attempt);
+    const reset = await fetch(`${baseUrl}/api/progress`, { method: "DELETE" });
+    expect(await reset.json()).toEqual({
+      version: 2,
+      generation: 1,
+      attempts: [],
     });
+    const currentAttempt = { ...attempt, id: "current-attempt" };
+    await postJson(`${baseUrl}/api/progress/attempt`, currentAttempt);
+
+    const stale = await postJson(`${baseUrl}/api/progress/import`, {
+      version: 2,
+      generation: 0,
+      attempts: [attempt],
+    });
+
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({
+      error: "Progress generation is stale.",
+      current: { version: 2, generation: 1, attempts: [currentAttempt] },
+    });
+    const current = await fetch(`${baseUrl}/api/progress`);
+    expect(await current.json()).toEqual({
+      version: 2,
+      generation: 1,
+      attempts: [currentAttempt],
+    });
+  });
+
+  it.each([
+    {
+      endpoint: "import",
+      body: { version: 2, generation: -1, attempts: [] },
+    },
+    { endpoint: "attempt", body: { id: "bad" } },
+  ])("rejects an invalid $endpoint body", async ({ endpoint, body }) => {
+    const { baseUrl } = await startServer();
+
+    const response = await postJson(`${baseUrl}/api/progress/${endpoint}`, body);
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "Invalid progress document." });
-    expect(JSON.parse(await readFile(progressFile, "utf8"))).toEqual(original);
   });
 
   it("returns a controlled error for malformed progress on disk", async () => {
