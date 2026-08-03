@@ -13,10 +13,13 @@ export type GenerateCoachOptions = {
   apiKey?: string;
   model?: string;
   fetchImpl?: FetchLike;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_OPENAI_MODEL = "gpt-5.6-luna";
+const DEFAULT_TIMEOUT_MS = 15_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -72,6 +75,12 @@ export const generateCoachSummary = async (
   const model =
     (options.model ?? process.env.OPENAI_MODEL)?.trim() || DEFAULT_OPENAI_MODEL;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutSignal = AbortSignal.timeout(
+    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
 
   try {
     const response = await fetchImpl(OPENAI_RESPONSES_URL, {
@@ -83,10 +92,12 @@ export const generateCoachSummary = async (
       body: JSON.stringify({
         model,
         store: false,
+        max_output_tokens: 250,
         instructions:
           "Give a concise SAT coaching recap in plain text. Explain the key idea and one useful next step without changing the recorded result.",
         input: coachInput(payload),
       }),
+      signal,
     });
 
     if (!response.ok) {

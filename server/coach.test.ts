@@ -74,9 +74,11 @@ describe("generateCoachSummary", () => {
     expect(JSON.parse(String(init?.body))).toEqual({
       model: "gpt-5.6-luna",
       store: false,
+      max_output_tokens: 250,
       instructions: expect.stringMatching(/concise.*plain text/i),
       input: expect.stringContaining("Solve x + 2 = 5."),
     });
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(init?.body)).input).toContain(
       "Accepted answers: B: 3",
     );
@@ -102,6 +104,24 @@ describe("generateCoachSummary", () => {
 
     const [, init] = fetchImpl.mock.calls[0];
     expect(JSON.parse(String(init?.body))).toMatchObject({ model: "gpt-custom" });
+  });
+
+  it("forwards caller cancellation to the upstream model request", async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<FetchLike>(async (_input, init) => {
+      expect(init?.signal).toBeDefined();
+      controller.abort();
+      expect(init?.signal?.aborted).toBe(true);
+      throw new DOMException("cancelled", "AbortError");
+    });
+
+    await expect(
+      generateCoachSummary(payload, {
+        apiKey: "server-secret",
+        fetchImpl,
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual({ available: false });
   });
 
   it.each([

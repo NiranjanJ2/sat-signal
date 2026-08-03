@@ -24,7 +24,9 @@ const isCoachPayload = (value: unknown): value is CoachApiPayload => {
   );
 };
 
-export function createApiApp() {
+export function createApiApp(
+  generateCoach: typeof generateCoachSummary = generateCoachSummary,
+) {
   const app = express();
 
   app.disable("x-powered-by");
@@ -35,8 +37,27 @@ export function createApiApp() {
       return;
     }
 
-    const result = await generateCoachSummary(request.body);
-    response.status(result.available ? 200 : 503).json(result);
+    const controller = new AbortController();
+    const abortModelWork = () => controller.abort();
+    const abortIfDisconnected = () => {
+      if (!response.writableEnded) {
+        abortModelWork();
+      }
+    };
+    request.once("aborted", abortModelWork);
+    response.once("close", abortIfDisconnected);
+
+    try {
+      const result = await generateCoach(request.body, {
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted) {
+        response.status(result.available ? 200 : 503).json(result);
+      }
+    } finally {
+      request.off("aborted", abortModelWork);
+      response.off("close", abortIfDisconnected);
+    }
   });
 
   return app;

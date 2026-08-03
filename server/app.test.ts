@@ -1,6 +1,8 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CoachApiPayload } from "../src/lib/coach-contract";
+import type { GenerateCoachOptions } from "./coach";
 import { createApiApp } from "./app";
 
 describe("coach API", () => {
@@ -35,6 +37,48 @@ describe("coach API", () => {
     server = createApiApp().listen(0, "127.0.0.1");
     await new Promise((resolve) => server?.once("listening", resolve));
   };
+
+  it("aborts model work when the browser disconnects", async () => {
+    let resolveAborted!: () => void;
+    const aborted = new Promise<void>((resolve) => {
+      resolveAborted = resolve;
+    });
+    const generate = vi.fn(
+      async (_payload: CoachApiPayload, options?: GenerateCoachOptions) =>
+        new Promise<{ available: false }>((resolve) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              resolveAborted();
+              resolve({ available: false });
+            },
+            { once: true },
+          );
+        }),
+    );
+    server = createApiApp(generate).listen(0, "127.0.0.1");
+    await new Promise((resolve) => server?.once("listening", resolve));
+
+    const controller = new AbortController();
+    const pending = fetch(`${apiUrl()}/api/explain`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        question: "Solve x + 2 = 5.",
+        choices: ["A: 1", "B: 3"],
+        selectedAnswer: "A: 1",
+        correctAnswers: ["B: 3"],
+        topic: "Algebra — Linear equations",
+        rationale: "Subtract 2 from both sides.",
+      }),
+      signal: controller.signal,
+    });
+
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await expect(aborted).resolves.toBeUndefined();
+  });
 
   it("rejects malformed coach requests without calling the model", async () => {
     await startServer();

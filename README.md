@@ -24,6 +24,8 @@ OPENAI_MODEL=gpt-5.6-luna
 
 The key is read only by the local Express server and is never included in browser code or saved practice data. A coach request sends sanitized plain text for the current question, choices, response, accepted answer, topic, and College Board rationale to the configured model. It never sends the service's raw HTML or embedded image data. Any non-abort API failure falls back to a local recap.
 
+The server intentionally binds to `127.0.0.1` for personal use. If you later place it behind a public reverse proxy, add authentication and rate limiting before enabling `OPENAI_API_KEY`; otherwise the coach endpoint could be used against your API quota.
+
 ## Verify it
 
 ```bash
