@@ -1,4 +1,4 @@
-import type { Attempt, PracticeState, Question } from "../types";
+import type { Attempt, PracticeState, QuestionMeta } from "../types";
 import { initialPracticeState, recordAttempt } from "./practice";
 
 export const PRACTICE_STORAGE_KEY = "sat-practice-state";
@@ -10,7 +10,7 @@ export type StorageLike = {
 
 export function loadPracticeState(
   storage: StorageLike,
-  questions: readonly Question[],
+  questions: readonly QuestionMeta[],
 ): PracticeState {
   try {
     const stored = storage.getItem(PRACTICE_STORAGE_KEY);
@@ -39,7 +39,10 @@ export function savePracticeState(
   state: PracticeState,
 ): boolean {
   try {
-    storage.setItem(PRACTICE_STORAGE_KEY, JSON.stringify(state));
+    storage.setItem(
+      PRACTICE_STORAGE_KEY,
+      JSON.stringify({ version: 2, attempts: state.attempts }),
+    );
     return true;
   } catch {
     return false;
@@ -47,25 +50,21 @@ export function savePracticeState(
 }
 
 type StoredPracticeState = {
-  version: 1;
+  version: 2;
   attempts: unknown[];
-  unresolvedIds: unknown[];
-  missedHistoryIds: unknown[];
 };
 
 function isPracticeStateDocument(value: unknown): value is StoredPracticeState {
   return (
     isRecord(value) &&
-    value.version === 1 &&
-    Array.isArray(value.attempts) &&
-    Array.isArray(value.unresolvedIds) &&
-    Array.isArray(value.missedHistoryIds)
+    value.version === 2 &&
+    Array.isArray(value.attempts)
   );
 }
 
 function normalizeAttempts(
   values: readonly unknown[],
-  questionsById: ReadonlyMap<string, Question>,
+  questionsById: ReadonlyMap<string, QuestionMeta>,
 ): Attempt[] {
   const attempts: Attempt[] = [];
   const seenIds = new Set<string>();
@@ -81,10 +80,7 @@ function normalizeAttempts(
     }
 
     seenIds.add(value.id);
-    attempts.push({
-      ...value,
-      correct: value.selectedIndex === question.answerIndex,
-    });
+    attempts.push(value);
   }
 
   return attempts;
@@ -100,10 +96,8 @@ function isAttempt(value: unknown): value is Attempt {
     value.id.trim().length > 0 &&
     typeof value.questionId === "string" &&
     value.questionId.trim().length > 0 &&
-    typeof value.selectedIndex === "number" &&
-    Number.isInteger(value.selectedIndex) &&
-    value.selectedIndex >= 0 &&
-    value.selectedIndex <= 3 &&
+    typeof value.response === "string" &&
+    value.response.trim().length > 0 &&
     typeof value.correct === "boolean" &&
     typeof value.createdAt === "string" &&
     value.createdAt.trim().length > 0 &&

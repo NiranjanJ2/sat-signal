@@ -1,33 +1,33 @@
 import { describe, expect, it } from "vitest";
-import type { Attempt, Filters, PracticeState, Question } from "../types";
+import type { Attempt, Filters, PracticeState, QuestionMeta } from "../types";
 import {
   deriveTopicStats,
   filterQuestions,
   recordAttempt,
 } from "./practice";
 
-const question = (overrides: Partial<Question> = {}): Question => ({
-  id: "q-1",
+const meta = (overrides: Partial<QuestionMeta> = {}): QuestionMeta => ({
+  id: "external-q-1",
+  externalId: "external-q-1",
   section: "math",
+  domainCode: "H",
   domain: "Algebra",
-  skill: "Linear equations",
+  skillCode: "H.A.",
+  skill: "Linear equations in one variable",
   difficulty: "medium",
-  prompt: "Solve x + 2 = 5.",
-  choices: ["1", "2", "3", "4"],
-  answerIndex: 2,
-  explanation: "Subtract 2 from both sides.",
   ...overrides,
 });
 
 const filters: Filters = {
   subject: "All",
   domain: "All",
+  skill: "All",
   difficulty: "All",
   mode: "all",
 };
 
 const emptyState: PracticeState = {
-  version: 1,
+  version: 2,
   attempts: [],
   unresolvedIds: [],
   missedHistoryIds: [],
@@ -35,79 +35,84 @@ const emptyState: PracticeState = {
 
 const attempt = (overrides: Partial<Attempt> = {}): Attempt => ({
   id: "attempt-1",
-  questionId: "q-1",
-  selectedIndex: 0,
+  questionId: "external-q-1",
+  response: "A",
   correct: false,
   createdAt: "2026-08-03T00:00:00.000Z",
   ...overrides,
 });
 
 describe("filterQuestions", () => {
-  const bank = [
-    question(),
-    question({ id: "q-2", difficulty: "hard" }),
-    question({
-      id: "q-3",
+  const catalog = [
+    meta(),
+    meta({ id: "external-q-2", externalId: "external-q-2", difficulty: "hard" }),
+    meta({
+      id: "external-q-3",
+      externalId: "external-q-3",
       section: "reading-writing",
+      domainCode: "CAS",
       domain: "Craft and Structure",
+      skillCode: "WIC",
+      skill: "Words in Context",
       difficulty: "hard",
     }),
   ];
 
-  it("applies every active filter with intersection semantics", () => {
+  it("applies subject, domain, skill, and difficulty with intersection semantics", () => {
     expect(
       filterQuestions(
-        bank,
+        catalog,
         {
           subject: "math",
           domain: "Algebra",
+          skill: "Linear equations in one variable",
           difficulty: "hard",
           mode: "all",
         },
         emptyState,
       ).map(({ id }) => id),
-    ).toEqual(["q-2"]);
+    ).toEqual(["external-q-2"]);
   });
 
-  it("shows only unresolved questions in missed mode", () => {
+  it("shows only unresolved catalog ids in missed mode", () => {
     expect(
-      filterQuestions(bank, { ...filters, mode: "missed" }, {
+      filterQuestions(catalog, { ...filters, mode: "missed" }, {
         ...emptyState,
-        unresolvedIds: ["q-3", "missing-id"],
+        unresolvedIds: ["external-q-3", "removed-id"],
       }).map(({ id }) => id),
-    ).toEqual(["q-3"]);
+    ).toEqual(["external-q-3"]);
   });
 });
 
 describe("recordAttempt", () => {
-  it("adds a wrong answer to both retry and missed history once", () => {
+  it("adds a wrong response to retry and missed history exactly once", () => {
     const once = recordAttempt(emptyState, attempt());
     const twice = recordAttempt(once, attempt());
 
     expect(twice.attempts).toHaveLength(1);
-    expect(twice.unresolvedIds).toEqual(["q-1"]);
-    expect(twice.missedHistoryIds).toEqual(["q-1"]);
+    expect(twice.unresolvedIds).toEqual(["external-q-1"]);
+    expect(twice.missedHistoryIds).toEqual(["external-q-1"]);
   });
 
-  it("removes a corrected question from retry without erasing history", () => {
+  it("removes a corrected response from retry without erasing history", () => {
     const missed = recordAttempt(emptyState, attempt());
     const corrected = recordAttempt(
       missed,
-      attempt({ id: "attempt-2", selectedIndex: 2, correct: true }),
+      attempt({ id: "attempt-2", response: "C", correct: true }),
     );
 
     expect(corrected.unresolvedIds).toEqual([]);
-    expect(corrected.missedHistoryIds).toEqual(["q-1"]);
+    expect(corrected.missedHistoryIds).toEqual(["external-q-1"]);
     expect(corrected.attempts).toHaveLength(2);
   });
 });
 
 describe("deriveTopicStats", () => {
-  it("returns a defined not-started stat and derives attempted accuracy", () => {
-    const bank = [question(), question({ id: "q-2", domain: "Geometry" })];
-    const stats = deriveTopicStats(bank, [
+  it("derives catalog-domain stats without loading question details", () => {
+    const catalog = [meta(), meta({ id: "external-q-2", domainCode: "S", domain: "Geometry and Trigonometry" })];
+    const stats = deriveTopicStats(catalog, [
       attempt(),
-      attempt({ id: "attempt-2", questionId: "q-1", correct: true }),
+      attempt({ id: "attempt-2", correct: true, response: "C" }),
     ]);
 
     expect(stats).toEqual([
@@ -119,7 +124,7 @@ describe("deriveTopicStats", () => {
         accuracy: 50,
       },
       {
-        domain: "Geometry",
+        domain: "Geometry and Trigonometry",
         subject: "math",
         attempted: 0,
         correct: 0,

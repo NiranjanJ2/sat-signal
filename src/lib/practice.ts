@@ -2,13 +2,13 @@ import type {
   Attempt,
   Filters,
   PracticeState,
-  Question,
+  QuestionMeta,
   TopicStat,
 } from "../types";
 
 export function initialPracticeState(): PracticeState {
   return {
-    version: 1,
+    version: 2,
     attempts: [],
     unresolvedIds: [],
     missedHistoryIds: [],
@@ -16,16 +16,17 @@ export function initialPracticeState(): PracticeState {
 }
 
 export function filterQuestions(
-  questions: readonly Question[],
+  questions: readonly QuestionMeta[],
   filters: Filters,
   state: PracticeState,
-): Question[] {
+): QuestionMeta[] {
   const unresolvedIds = new Set(state.unresolvedIds);
 
   return questions.filter((question) => {
     return (
       (filters.subject === "All" || question.section === filters.subject) &&
       (filters.domain === "All" || question.domain === filters.domain) &&
+      (filters.skill === "All" || question.skill === filters.skill) &&
       (filters.difficulty === "All" ||
         question.difficulty === filters.difficulty) &&
       (filters.mode === "all" || unresolvedIds.has(question.id))
@@ -57,7 +58,7 @@ export function recordAttempt(
 }
 
 export function deriveTopicStats(
-  questions: readonly Question[],
+  questions: readonly QuestionMeta[],
   attempts: readonly Attempt[],
 ): TopicStat[] {
   const stats: TopicStat[] = [];

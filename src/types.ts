@@ -1,30 +1,43 @@
 export type Subject = "reading-writing" | "math";
 export type Difficulty = "easy" | "medium" | "hard";
-export type AnswerIndex = 0 | 1 | 2 | 3;
 
-export type Question = {
+export type QuestionMeta = {
   id: string;
+  externalId?: string;
+  ibn?: string;
   section: Subject;
+  domainCode: string;
   domain: string;
+  skillCode: string;
   skill: string;
   difficulty: Difficulty;
-  prompt: string;
-  passage?: string;
-  choices: readonly [string, string, string, string];
-  answerIndex: AnswerIndex;
-  explanation: string;
+};
+
+export type QuestionChoice = {
+  id: string;
+  label: string;
+  html: string;
+};
+
+export type QuestionDetail = QuestionMeta & {
+  kind: "multiple-choice" | "student-produced-response";
+  stimulusHtml: string;
+  promptHtml: string;
+  choices: QuestionChoice[];
+  correctAnswers: string[];
+  rationaleHtml: string;
 };
 
 export type Attempt = {
   id: string;
   questionId: string;
-  selectedIndex: number;
+  response: string;
   correct: boolean;
   createdAt: string;
 };
 
 export type PracticeState = {
-  version: 1;
+  version: 2;
   attempts: Attempt[];
   unresolvedIds: string[];
   missedHistoryIds: string[];
@@ -33,6 +46,7 @@ export type PracticeState = {
 export type Filters = {
   subject: Subject | "All";
   domain: string | "All";
+  skill: string | "All";
   difficulty: Difficulty | "All";
   mode: "all" | "missed";
 };
