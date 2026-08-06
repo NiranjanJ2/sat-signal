@@ -82,6 +82,21 @@ describe("RichHtml", () => {
     expect(math?.textContent).toBe("x2");
   });
 
+  it("renders parentheses from College Board legacy mfenced MathML", () => {
+    const { container } = render(
+      <RichHtml
+        html={
+          '<math alttext="0.17 left parenthesis x plus y right parenthesis">' +
+          '<mn>0.17</mn><mfenced><mrow><mi>x</mi><mo>+</mo><mi>y</mi></mrow></mfenced></math>'
+        }
+      />,
+    );
+
+    const math = container.querySelector("math");
+    expect(math?.textContent).toBe("0.17(x+y)");
+    expect(math?.querySelector("mfenced")).toBeNull();
+  });
+
   it("removes scripts and inline event handlers", () => {
     const { container } = render(
       <RichHtml
