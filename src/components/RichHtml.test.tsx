@@ -44,6 +44,29 @@ describe("RichHtml", () => {
     expect(container).not.toHaveTextContent("iVBORw0KGgo");
   });
 
+  it("renders sanitized College Board inline SVG figures", () => {
+    const { container } = render(
+      <RichHtml
+        html={
+          '<figure class="image"><svg width="356.889" height="241.585" viewBox="0 0 356.889 241.585" role="img" aria-label="A geometry diagram" onload="alert(1)">' +
+          '<g><line x1="17.634" y1="20.362" x2="355.944" y2="20.362" stroke="#231f20"></line>' +
+          '<path d="M10 10 H 90 V 90" fill="none" stroke="#231f20"></path></g>' +
+          '<script>alert(2)</script></svg></figure>'
+        }
+      />,
+    );
+
+    const figure = container.querySelector("figure");
+    const svg = figure?.querySelector("svg");
+    expect(svg).not.toBeNull();
+    expect(svg).toHaveAttribute("viewBox", "0 0 356.889 241.585");
+    expect(svg).toHaveAttribute("aria-label", "A geometry diagram");
+    expect(svg?.querySelector("line")).not.toBeNull();
+    expect(svg?.querySelector("path")).not.toBeNull();
+    expect(svg).not.toHaveAttribute("onload");
+    expect(svg?.querySelector("script")).toBeNull();
+  });
+
   it("preserves MathML structure and accessible alt text", () => {
     const { container } = render(
       <RichHtml

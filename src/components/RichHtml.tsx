@@ -25,7 +25,7 @@ const sanitizerConfig: Config = {
     "style",
     "textarea",
   ],
-  USE_PROFILES: { html: true, mathMl: true },
+  USE_PROFILES: { html: true, mathMl: true, svg: true },
 };
 
 const urlAttributes = new Set([
