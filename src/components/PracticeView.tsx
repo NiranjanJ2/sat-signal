@@ -1,7 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { gradeResponse } from "../lib/qbank";
 import type { Filters, QuestionDetail, QuestionMeta, TopicStat } from "../types";
 import { CoachPanel } from "./CoachPanel";
+import {
+  DesmosPanel,
+  isCalculatorOpen,
+  rememberCalculatorOpen,
+} from "./DesmosPanel";
 import { MemoryTrace } from "./MemoryTrace";
 import { RichHtml } from "./RichHtml";
 
@@ -51,6 +56,7 @@ export function PracticeView({
   const [response, setResponse] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [correct, setCorrect] = useState(false);
+  const [calculatorOpen, setCalculatorOpen] = useState(isCalculatorOpen);
   const submittedRef = useRef(false);
   const headingRef = useRef<HTMLDivElement>(null);
 
@@ -59,6 +65,58 @@ export function PracticeView({
       headingRef.current?.focus();
     }
   }, [detailState.status, focusQuestion]);
+
+  const toggleCalculator = (open: boolean) => {
+    rememberCalculatorOpen(open);
+    setCalculatorOpen(open);
+  };
+
+  const checkAnswer = useCallback(() => {
+    const cleanResponse = response.trim();
+    if (!cleanResponse || submittedRef.current) {
+      return;
+    }
+
+    submittedRef.current = true;
+    setCorrect(onSubmit(cleanResponse));
+    setSubmitted(true);
+  }, [onSubmit, response]);
+
+  useEffect(() => {
+    if (detailState.status !== "ready") {
+      return;
+    }
+
+    const advanceOnEnter = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Enter" ||
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
+
+      // Buttons and links already activate on Enter, and the calculator keypad
+      // needs Enter for entering expressions.
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("button, a, textarea, .calculator-panel")) {
+        return;
+      }
+
+      event.preventDefault();
+      if (submittedRef.current) {
+        onNext();
+      } else {
+        checkAnswer();
+      }
+    };
+
+    window.addEventListener("keydown", advanceOnEnter);
+    return () => window.removeEventListener("keydown", advanceOnEnter);
+  }, [checkAnswer, detailState.status, onNext]);
 
   if (!currentMeta) {
     const retryMode = queueMode === "missed";
@@ -139,17 +197,6 @@ export function PracticeView({
   }
 
   const question = detailState.question;
-  const handleSubmit = () => {
-    const cleanResponse = response.trim();
-    if (!cleanResponse || submittedRef.current) {
-      return;
-    }
-
-    submittedRef.current = true;
-    const result = onSubmit(cleanResponse);
-    setCorrect(result);
-    setSubmitted(true);
-  };
 
   return (
     <>
@@ -159,9 +206,23 @@ export function PracticeView({
             <p className="section-index">{sectionName(question)} · {question.difficulty}</p>
             <p className="skill-name">{question.skill}</p>
           </div>
-          <span className="queue-position">
-            {position === null ? "Retry answered" : `Question ${position} of ${pool.length}`}
-          </span>
+          <div className="question-meta-actions">
+            {question.section === "math" ? (
+              <button
+                className="button button-quiet calculator-toggle"
+                type="button"
+                aria-expanded={calculatorOpen}
+                aria-controls={calculatorOpen ? "desmos-host" : undefined}
+                onClick={() => toggleCalculator(!calculatorOpen)}
+              >
+                <span aria-hidden="true">∿</span>
+                {calculatorOpen ? "Hide calculator" : "Graphing calculator"}
+              </button>
+            ) : null}
+            <span className="queue-position">
+              {position === null ? "Retry answered" : `Question ${position} of ${pool.length}`}
+            </span>
+          </div>
         </header>
 
         <div className={`question-layout${question.stimulusHtml ? " has-passage" : ""}`}>
@@ -177,7 +238,7 @@ export function PracticeView({
               <RichHtml html={question.promptHtml} className="service-rich-text" />
             </div>
 
-            <form onSubmit={(event) => { event.preventDefault(); handleSubmit(); }}>
+            <form onSubmit={(event) => { event.preventDefault(); checkAnswer(); }}>
               {question.kind === "multiple-choice" ? (
                 <fieldset className="answer-list" disabled={submitted}>
                   <legend>Choose the best answer</legend>
@@ -224,7 +285,7 @@ export function PracticeView({
                     Check answer
                   </button>
                   <span className="keyboard-hint">
-                    {question.kind === "multiple-choice" ? "Use arrow keys to move choices" : "Fractions such as 3/4 are accepted"}
+                    Enter checks · {question.kind === "multiple-choice" ? "arrow keys move choices" : "fractions such as 3/4 are accepted"}
                   </span>
                 </div>
               ) : (
@@ -241,7 +302,9 @@ export function PracticeView({
                     </div>
                   ) : null}
                   <div className="feedback-actions">
-                    <button className="button button-primary" type="button" onClick={onNext}>Next question</button>
+                    <button className="button button-primary" type="button" onClick={onNext}>
+                      Next question <span className="key-cap" aria-hidden="true">↵</span>
+                    </button>
                     <span>{correct ? "This topic just got a little stronger." : "This question is now in your retry queue."}</span>
                   </div>
                 </div>
@@ -249,6 +312,10 @@ export function PracticeView({
             </form>
           </section>
         </div>
+
+        {question.section === "math" && calculatorOpen ? (
+          <DesmosPanel onClose={() => toggleCalculator(false)} />
+        ) : null}
 
         {submitted ? (
           <CoachPanel
