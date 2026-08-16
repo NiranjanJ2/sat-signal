@@ -31,7 +31,45 @@ const sanitizerConfig: Config = {
 
 const mathMlNamespace = "http://www.w3.org/1998/Math/MathML";
 const svgNamespace = "http://www.w3.org/2000/svg";
-const svgNodesWithTransparentFill = new WeakSet<Element>();
+const svgPresentationAttributes = new WeakMap<Element, Map<string, string>>();
+
+const svgPaintPattern =
+  /^(?:none|#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8}))$/iu;
+const svgNumberPattern = /^(?:\d+(?:\.\d+)?|\.\d+)$/u;
+const svgPresentationValidators: Readonly<Record<string, RegExp>> = {
+  fill: svgPaintPattern,
+  stroke: svgPaintPattern,
+  "stroke-linecap": /^(?:butt|round|square)$/u,
+  "stroke-linejoin": /^(?:bevel|miter|round)$/u,
+  "stroke-width": svgNumberPattern,
+};
+
+const extractSafeSvgPresentationAttributes = (
+  style: string,
+): Map<string, string> => {
+  const effectiveDeclarations = new Map<string, string>();
+
+  for (const declaration of style.split(";")) {
+    const separator = declaration.indexOf(":");
+    if (separator < 0) {
+      continue;
+    }
+
+    effectiveDeclarations.set(
+      declaration.slice(0, separator).trim().toLowerCase(),
+      declaration.slice(separator + 1).trim().toLowerCase(),
+    );
+  }
+
+  const safeAttributes = new Map<string, string>();
+  for (const [name, value] of effectiveDeclarations) {
+    if (svgPresentationValidators[name]?.test(value)) {
+      safeAttributes.set(name, value);
+    }
+  }
+
+  return safeAttributes;
+};
 
 const createMathOperator = (text: string): Element => {
   const operator = document.createElementNS(mathMlNamespace, "mo");
@@ -88,26 +126,11 @@ const isUnsafeUrl = (value: string): boolean => {
 purifier.addHook("uponSanitizeAttribute", (_node, attribute) => {
   const attributeName = attribute.attrName.toLowerCase();
 
-  if (
-    attributeName === "style" &&
-    _node.namespaceURI === svgNamespace
-  ) {
-    const effectiveFill = attribute.attrValue
-      .split(";")
-      .reduce<string | null>((fill, declaration) => {
-        const separator = declaration.indexOf(":");
-        if (separator < 0) {
-          return fill;
-        }
-
-        return declaration.slice(0, separator).trim().toLowerCase() === "fill"
-          ? declaration.slice(separator + 1).trim().toLowerCase()
-          : fill;
-      }, null);
-
-    if (effectiveFill === "none") {
-      svgNodesWithTransparentFill.add(_node as Element);
-    }
+  if (attributeName === "style" && _node.namespaceURI === svgNamespace) {
+    svgPresentationAttributes.set(
+      _node as Element,
+      extractSafeSvgPresentationAttributes(attribute.attrValue),
+    );
   }
 
   if (
@@ -128,8 +151,11 @@ purifier.addHook("uponSanitizeAttribute", (_node, attribute) => {
 });
 
 purifier.addHook("afterSanitizeAttributes", (node) => {
-  if (svgNodesWithTransparentFill.delete(node as Element)) {
-    (node as Element).setAttribute("fill", "none");
+  const presentationAttributes = svgPresentationAttributes.get(node as Element);
+  svgPresentationAttributes.delete(node as Element);
+
+  for (const [name, value] of presentationAttributes ?? []) {
+    (node as Element).setAttribute(name, value);
   }
 });
 

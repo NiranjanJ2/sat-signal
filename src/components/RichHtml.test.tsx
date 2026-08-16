@@ -89,6 +89,91 @@ describe("RichHtml", () => {
     expect(container.querySelector("polygon")).toHaveAttribute("stroke", "#000");
   });
 
+  it("preserves safe College Board SVG presentation styles as attributes", () => {
+    const { container } = render(
+      <RichHtml
+        html={
+          '<svg><path class="grid-line" style="fill:none;stroke:#000000;stroke-width:0.708982"></path>' +
+          '<path class="white-marker" style="fill:#ffffff;stroke:#000000;stroke-linejoin:miter"></path>' +
+          '<path class="relationship" style="fill:none;stroke:#000000;stroke-linecap:square;stroke-width:2.3"></path>' +
+          '<path class="unsafe-paint" style="fill:none;fill:url(javascript:alert(1));stroke:url(https://example.test/paint.svg)"></path>' +
+          '<path class="invalid-color" style="fill:#12345"></path></svg>'
+        }
+      />,
+    );
+
+    expect(container.querySelector(".grid-line")).toHaveAttribute(
+      "stroke",
+      "#000000",
+    );
+    expect(container.querySelector(".grid-line")).toHaveAttribute(
+      "stroke-width",
+      "0.708982",
+    );
+    expect(container.querySelector(".white-marker")).toHaveAttribute(
+      "fill",
+      "#ffffff",
+    );
+    expect(container.querySelector(".white-marker")).toHaveAttribute(
+      "stroke-linejoin",
+      "miter",
+    );
+    expect(container.querySelector(".relationship")).toHaveAttribute(
+      "stroke-linecap",
+      "square",
+    );
+    expect(container.querySelector(".relationship")).toHaveAttribute(
+      "stroke-width",
+      "2.3",
+    );
+    expect(container.querySelector(".unsafe-paint")).not.toHaveAttribute("fill");
+    expect(container.querySelector(".unsafe-paint")).not.toHaveAttribute("stroke");
+    expect(container.querySelector(".invalid-color")).not.toHaveAttribute("fill");
+    expect(container.querySelector("[style]")).toBeNull();
+  });
+
+  it("renders the graph structure used by College Board item 243f2e8b", () => {
+    const { container } = render(
+      <RichHtml
+        html={
+          '<figure><svg viewBox="0 0 507 507" role="img" aria-label="A graph in the x y-plane. Refer to the long description.">' +
+          '<path class="figure-background" d="M0 507H507V0H0Z" style="fill:none"></path>' +
+          '<defs><path id="axis-label" d="M0 0H4V8H0Z"></path><path id="tick-label" d="M0 0H3V6H0Z"></path><path id="point" d="M4 0A4 4 0 1 1 3.99 0Z" style="fill:#ffffff;stroke:#000000;stroke-linejoin:miter"></path></defs>' +
+          '<g class="grid"><path d="M40 100H467" style="fill:none;stroke:#000000;stroke-width:0.708982"></path><path d="M250 40V467" style="fill:none;stroke:#000000;stroke-width:0.708982"></path></g>' +
+          '<g class="axes"><path d="M40 250H467" style="fill:none;stroke:#000000;stroke-width:1.949699"></path><path d="M250 467V40" style="fill:none;stroke:#000000;stroke-width:1.949699"></path></g>' +
+          '<g class="labels"><use href="#axis-label" x="470" y="245"></use><use href="#axis-label" x="255" y="35"></use><use href="#tick-label" x="235" y="260"></use></g>' +
+          '<g class="points"><use href="#point" x="250" y="300" style="fill:#ffffff;stroke:#000000"></use><use href="#point" x="300" y="275" style="fill:#ffffff;stroke:#000000"></use><use href="#point" x="350" y="250" style="fill:#ffffff;stroke:#000000"></use></g>' +
+          '<path class="relationship-line" d="M220 315L390 230" style="fill:none;stroke:#000000;stroke-linecap:square;stroke-width:2.3"></path>' +
+          '<clipPath id="plot-area"><rect x="40" y="40" width="427" height="427"></rect></clipPath></svg>' +
+          '<div role="region" aria-label="Long description for the graph"><p>The line passes through the points (0, negative 5), (1, negative 3), and (2, negative 1).</p></div></figure>'
+        }
+      />,
+    );
+
+    expect(container.querySelector(".grid path")).toHaveAttribute(
+      "stroke-width",
+      "0.708982",
+    );
+    expect(container.querySelector(".axes path")).toHaveAttribute(
+      "stroke",
+      "#000000",
+    );
+    expect(container.querySelector("#point")).toHaveAttribute("fill", "#ffffff");
+    expect(container.querySelectorAll(".points use")).toHaveLength(3);
+    expect(container.querySelector(".relationship-line")).toHaveAttribute(
+      "stroke-width",
+      "2.3",
+    );
+    expect(container.querySelector(".relationship-line")).toHaveAttribute(
+      "stroke-linecap",
+      "square",
+    );
+    expect(container.querySelector("#plot-area rect")).not.toBeNull();
+    expect(container).toHaveTextContent("(0, negative 5)");
+    expect(container.querySelector("style")).toBeNull();
+    expect(container.querySelector("[style]")).toBeNull();
+  });
+
   it("renders College Board SVG glyph references without allowing external use URLs", () => {
     const { container } = render(
       <RichHtml
