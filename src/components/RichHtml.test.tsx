@@ -67,6 +67,84 @@ describe("RichHtml", () => {
     expect(svg?.querySelector("script")).toBeNull();
   });
 
+  it("keeps College Board SVG background paths transparent", () => {
+    const { container } = render(
+      <RichHtml
+        html={
+          '<svg viewBox="0 0 250 210"><path class="figure-background" d="M 0 200 L 245 200 L 245 0 L 0 0 Z" fill="red" style="fill:none;background-image:url(javascript:alert(1))"></path>' +
+          '<path class="competing-fill" d="M 0 0 L 1 1" style="fill:none;fill:red"></path>' +
+          '<polygon points="192,1 192,146 1,146" fill="none" stroke="#000"></polygon></svg>'
+        }
+      />,
+    );
+
+    const background = container.querySelector(".figure-background");
+    expect(background).toHaveAttribute("fill", "none");
+    expect(background).not.toHaveAttribute("style");
+    expect(container.querySelector(".competing-fill")).not.toHaveAttribute(
+      "fill",
+      "none",
+    );
+    expect(container.querySelector(".competing-fill")).not.toHaveAttribute("style");
+    expect(container.querySelector("polygon")).toHaveAttribute("stroke", "#000");
+  });
+
+  it("renders College Board SVG glyph references without allowing external use URLs", () => {
+    const { container } = render(
+      <RichHtml
+        html={
+          '<svg><defs><path id="53-glyph" d="M 0 0 L 4 0"></path></defs>' +
+          '<use class="safe-glyph" xlink:href="#53-glyph"></use>' +
+          '<use class="external-glyph" href="https://example.test/sprite.svg#glyph"></use>' +
+          '<use class="external-xlink-glyph" xlink:href="https://example.test/sprite.svg#glyph"></use>' +
+          '<use class="script-glyph" href="javascript:alert(1)"></use></svg>'
+        }
+      />,
+    );
+
+    expect(container.querySelector(".safe-glyph")).toHaveAttribute(
+      "xlink:href",
+      "#53-glyph",
+    );
+    expect(container.querySelector(".external-glyph")).not.toHaveAttribute("href");
+    expect(container.querySelector(".external-xlink-glyph")).not.toHaveAttribute(
+      "xlink:href",
+    );
+    expect(container.querySelector(".script-glyph")).not.toHaveAttribute("href");
+  });
+
+  it("renders the complete SVG structure used by College Board item 3e66c309", () => {
+    const { container } = render(
+      <RichHtml
+        html={
+          '<figure><svg viewBox="0 0 250 210" role="img" aria-label="Right triangle upper R upper S upper T. Refer to long description.">' +
+          '<path class="figure-background" d="M0 200 L245 200 L245 0 L0 0Z" style="fill:none"></path>' +
+          '<defs><path id="digit-5"></path><path id="digit-3"></path><path id="letter-r"></path><path id="letter-s"></path><path id="letter-t"></path><path id="note-glyph"></path></defs>' +
+          '<g class="side-label"><use href="#digit-5"></use><use href="#digit-3"></use></g>' +
+          '<g class="vertex-labels"><use href="#letter-r"></use><use href="#letter-s"></use><use href="#letter-t"></use></g>' +
+          '<polygon class="triangle" points="192,1 192,146 1,146" fill="none" stroke="#000"></polygon>' +
+          '<rect class="right-angle" x="181" y="135" width="11" height="11" fill="none" stroke="#000"></rect>' +
+          '<g class="note-label"><use href="#note-glyph"></use></g></svg>' +
+          '<div role="region" aria-label="Long description for right triangle upper R upper S upper T"><ul><li>Angle upper S is a right angle.</li><li>The length of side upper R upper T is 53.</li><li>A note indicates the figure is not drawn to scale.</li></ul></div></figure>'
+        }
+      />,
+    );
+
+    expect(container.querySelector(".figure-background")).toHaveAttribute(
+      "fill",
+      "none",
+    );
+    expect(container.querySelector(".triangle")).not.toBeNull();
+    expect(container.querySelector(".right-angle")).not.toBeNull();
+    expect(container.querySelectorAll(".side-label use")).toHaveLength(2);
+    expect(container.querySelectorAll(".vertex-labels use")).toHaveLength(3);
+    expect(container.querySelectorAll(".note-label use")).toHaveLength(1);
+    expect(container).toHaveTextContent("The length of side upper R upper T is 53.");
+    expect(container).toHaveTextContent("figure is not drawn to scale");
+    expect(container.querySelector("style")).toBeNull();
+    expect(container.querySelector("[style]")).toBeNull();
+  });
+
   it("preserves MathML structure and accessible alt text", () => {
     const { container } = render(
       <RichHtml

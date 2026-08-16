@@ -9,7 +9,7 @@ const purifier = createDOMPurify(window);
 
 const sanitizerConfig: Config = {
   ADD_ATTR: ["alttext", "close", "open", "separators"],
-  ADD_TAGS: ["mfenced"],
+  ADD_TAGS: ["mfenced", "use"],
   FORBID_ATTR: ["style"],
   FORBID_TAGS: [
     "button",
@@ -30,6 +30,8 @@ const sanitizerConfig: Config = {
 };
 
 const mathMlNamespace = "http://www.w3.org/1998/Math/MathML";
+const svgNamespace = "http://www.w3.org/2000/svg";
+const svgNodesWithTransparentFill = new WeakSet<Element>();
 
 const createMathOperator = (text: string): Element => {
   const operator = document.createElementNS(mathMlNamespace, "mo");
@@ -84,11 +86,50 @@ const isUnsafeUrl = (value: string): boolean => {
 };
 
 purifier.addHook("uponSanitizeAttribute", (_node, attribute) => {
+  const attributeName = attribute.attrName.toLowerCase();
+
   if (
-    urlAttributes.has(attribute.attrName.toLowerCase()) &&
+    attributeName === "style" &&
+    _node.namespaceURI === svgNamespace
+  ) {
+    const effectiveFill = attribute.attrValue
+      .split(";")
+      .reduce<string | null>((fill, declaration) => {
+        const separator = declaration.indexOf(":");
+        if (separator < 0) {
+          return fill;
+        }
+
+        return declaration.slice(0, separator).trim().toLowerCase() === "fill"
+          ? declaration.slice(separator + 1).trim().toLowerCase()
+          : fill;
+      }, null);
+
+    if (effectiveFill === "none") {
+      svgNodesWithTransparentFill.add(_node as Element);
+    }
+  }
+
+  if (
+    _node.namespaceURI === svgNamespace &&
+    _node.nodeName.toLowerCase() === "use" &&
+    (attributeName === "href" || attributeName === "xlink:href") &&
+    !/^#[^#\s\u0000-\u001f\u007f]+$/u.test(attribute.attrValue.trim())
+  ) {
+    attribute.keepAttr = false;
+  }
+
+  if (
+    urlAttributes.has(attributeName) &&
     isUnsafeUrl(attribute.attrValue)
   ) {
     attribute.keepAttr = false;
+  }
+});
+
+purifier.addHook("afterSanitizeAttributes", (node) => {
+  if (svgNodesWithTransparentFill.delete(node as Element)) {
+    (node as Element).setAttribute("fill", "none");
   }
 });
 
