@@ -1,6 +1,6 @@
 # SAT Signal — live SAT practice
 
-SAT Signal is a local-first practice loop over College Board's live SAT Question Bank. Filter by section, domain, skill, and difficulty; answer one problem at a time; retry unresolved misses; and watch topic accuracy accumulate in a persistent memory trace.
+SAT Signal is a browser-local practice loop over College Board's live SAT Question Bank. Filter by section, domain, skill, and difficulty; answer one problem at a time; retry unresolved misses; and watch topic accuracy accumulate in a persistent memory trace.
 
 ## Run it
 
@@ -9,22 +9,27 @@ npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Progress is saved to `.sat-signal/progress.json`, with localStorage kept as a browser fallback; no account is required. The default queue contains only questions you have never attempted, while unresolved mistakes stay available under **Practice misses**.
+Open the URL Vite prints. There is no server and no account: the browser fetches released-question metadata directly from College Board, excludes IDs in the service's current live-item lists, and keeps only the open question plus a small in-memory lookahead cache.
 
-The browser loads released-question metadata directly from College Board, excludes IDs in the service's current live-item lists, and keeps only the open question plus a small in-memory lookahead cache so the next problem appears immediately. The JSON progress file contains only question IDs, responses, correctness, timestamps, and a reset generation; question text, choices, rationales, and answer keys are never bundled or persisted. Attempts are atomically merged or appended so two open tabs cannot overwrite each other, while the reset generation prevents an older tab from restoring erased history. An unreadable file is preserved rather than silently reset. Because this is an unofficial integration with an undocumented service, the endpoint can change without notice. Direct requests expose normal connection metadata such as your IP address and browser user agent to College Board.
+## How progress is stored
 
-## Optional AI coach
+Everything lives in `localStorage` under `sat-practice-state`, so each visitor has their own history and nothing is shared between them. The default queue contains only questions that browser has never attempted, so returning to the site never repeats a question you have already seen; unresolved mistakes stay available under **Practice misses**.
 
-The built-in coach works without an OpenAI request. To replace its deterministic recap with a generated summary, copy `.env.example` to `.env` and set a server-side OpenAI API key:
+The stored document holds only question IDs, responses, correctness, timestamps, and a reset generation — question text, choices, rationales, and answer keys are never persisted. Two tabs of the same browser share one key, so a save merges with whatever the other tab wrote instead of overwriting it, and a bumped generation from a reset in another tab stops a stale tab from resurrecting erased history.
+
+Consequences worth knowing: progress does not follow you to another browser or device, and clearing site data erases it with no recovery. There is no server-side copy.
+
+Because this is an unofficial integration with an undocumented service, the endpoint can change without notice. Requests expose normal connection metadata such as your IP address and browser user agent to College Board.
+
+## Deploy
+
+Static build, no functions, no environment variables:
 
 ```bash
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-5.6-luna
+npm run build   # emits dist/
 ```
 
-The key is read only by the local Express server and is never included in browser code or saved practice data. A coach request sends sanitized plain text for the current question, choices, response, accepted answer, topic, and College Board rationale to the configured model. It never sends the service's raw HTML or embedded image data. Any non-abort API failure falls back to a local recap.
-
-The server intentionally binds to `127.0.0.1` for personal use. If you later place it behind a public reverse proxy, add authentication and rate limiting before enabling `OPENAI_API_KEY`; otherwise the coach endpoint could be used against your API quota.
+Vercel auto-detects the Vite preset. Any static host works.
 
 ## Verify it
 

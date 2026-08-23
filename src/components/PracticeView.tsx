@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { gradeResponse } from "../lib/qbank";
 import type { Filters, QuestionDetail, QuestionMeta, TopicStat } from "../types";
-import { CoachPanel } from "./CoachPanel";
 import {
   DesmosPanel,
   isCalculatorOpen,
@@ -315,15 +314,6 @@ export function PracticeView({
 
         {question.section === "math" && calculatorOpen ? (
           <DesmosPanel onClose={() => toggleCalculator(false)} />
-        ) : null}
-
-        {submitted ? (
-          <CoachPanel
-            key={`${question.id}-${response}`}
-            question={question}
-            response={response}
-            autoStart={!correct}
-          />
         ) : null}
       </article>
 
