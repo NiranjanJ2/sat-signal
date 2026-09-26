@@ -34,6 +34,7 @@ export type Attempt = {
   response: string;
   correct: boolean;
   createdAt: string;
+  durationMs?: number;
 };
 
 export type PracticeState = {

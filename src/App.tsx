@@ -3,6 +3,8 @@ import { FilterBar } from "./components/FilterBar";
 import { MemoryTrace } from "./components/MemoryTrace";
 import { PracticeView } from "./components/PracticeView";
 import { ReviewView } from "./components/ReviewView";
+import { isCloudConfigured } from "./lib/cloud-config";
+import type { Account } from "./lib/cloud";
 import {
   fetchQuestionDetail,
   gradeResponse,
@@ -15,9 +17,12 @@ import {
   recordAttempt,
 } from "./lib/practice";
 import {
+  PRACTICE_STORAGE_KEY,
   loadPracticeSnapshot,
   mergePracticeStates,
+  mergePracticeSnapshots,
   savePracticeState,
+  scopedStorage,
   type StorageLike,
 } from "./lib/storage";
 import type {
@@ -43,6 +48,7 @@ const memoryStorage: StorageLike = {
   setItem: (key, value) => {
     memoryFallback.set(key, value);
   },
+  removeItem: (key) => { memoryFallback.delete(key); },
 };
 
 type CatalogStatus = "loading" | "ready" | "error";
@@ -58,6 +64,7 @@ type DetailRequest = {
 };
 
 const DETAIL_CACHE_LIMIT = 3;
+const loadCloud = () => import("./lib/cloud");
 
 let attemptSequence = 0;
 
@@ -139,7 +146,10 @@ const countStreak = (attempts: readonly Attempt[]): number => {
 };
 
 export default function App() {
-  const storageRef = useRef<StorageLike>(resolveStorage());
+  const guestStorageRef = useRef<StorageLike>(resolveStorage());
+  const storageRef = useRef<StorageLike>(guestStorageRef.current);
+  const accountUidRef = useRef<string | null>(null);
+  const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
   const catalogControllerRef = useRef<AbortController | null>(null);
   const catalogVersionRef = useRef(0);
   const detailVersionRef = useRef(0);
@@ -153,6 +163,16 @@ export default function App() {
     initialPracticeState,
   );
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const catalogRef = useRef(catalog);
+  const filtersRef = useRef(filters);
+  catalogRef.current = catalog;
+  filtersRef.current = filters;
+  const [identity, setIdentity] = useState<{ ready: boolean; account: Account | null }>({
+    ready: !isCloudConfigured(),
+    account: null,
+  });
+  const [syncStatus, setSyncStatus] = useState<"local" | "syncing" | "synced" | "error">("local");
+  const [authError, setAuthError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("practice");
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(null);
   const [questionEpoch, setQuestionEpoch] = useState(0);
@@ -160,6 +180,7 @@ export default function App() {
   const [detailState, setDetailState] = useState<DetailState>({ status: "idle" });
   const [resetOpen, setResetOpen] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSaving, setResetSaving] = useState(false);
   const resetCancelRef = useRef<HTMLButtonElement>(null);
 
   const abortAllDetailRequests = useCallback(() => {
@@ -168,6 +189,84 @@ export default function App() {
     }
     detailRequestsRef.current.clear();
   }, []);
+
+  const queueCloudSync = useCallback((uid: string, moveToUnseen = false) => {
+    const sync = async () => {
+      if (accountUidRef.current !== uid) return;
+      setSyncStatus("syncing");
+      const accountStorage = scopedStorage(guestStorageRef.current, uid);
+      const local = loadPracticeSnapshot(accountStorage, catalogRef.current);
+      const guest = loadPracticeSnapshot(guestStorageRef.current, catalogRef.current);
+      const { syncCloudProgress } = await loadCloud();
+      const remote = await syncCloudProgress(
+        uid,
+        local,
+        guest.state.attempts.length ? guest.state : undefined,
+      );
+      if (accountUidRef.current !== uid) return;
+
+      const latest = loadPracticeSnapshot(accountStorage, catalogRef.current);
+      const merged = mergePracticeSnapshots(latest, remote);
+      if (!savePracticeState(accountStorage, merged.state, merged.generation)) {
+        throw new Error("Browser progress could not be saved.");
+      }
+      if (guest.state.attempts.length) {
+        guestStorageRef.current.removeItem?.(PRACTICE_STORAGE_KEY);
+      }
+      progressGenerationRef.current = merged.generation;
+      setPracticeState(merged.state);
+      if (moveToUnseen) {
+        setCurrentQuestionId(
+          filterQuestions(catalogRef.current, filtersRef.current, merged.state)[0]?.id ?? null,
+        );
+        setQuestionEpoch((epoch) => epoch + 1);
+      }
+      setSyncStatus("synced");
+    };
+
+    syncQueueRef.current = syncQueueRef.current
+      .then(sync, sync)
+      .catch(() => { if (accountUidRef.current === uid) setSyncStatus("error"); });
+  }, []);
+
+  useEffect(() => {
+    if (!isCloudConfigured()) return;
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+    void loadCloud().then(({ onAccountChanged }) => {
+      if (active) unsubscribe = onAccountChanged((account) => setIdentity({ ready: true, account }));
+    }).catch(() => { if (active) setAuthError("Google sign-in could not load."); });
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (!identity.ready) return;
+    const uid = identity.account?.uid ?? null;
+    if (uid === accountUidRef.current) return;
+    accountUidRef.current = uid;
+
+    if (uid) {
+      const accountStorage = scopedStorage(guestStorageRef.current, uid);
+      const accountSnapshot = loadPracticeSnapshot(accountStorage, catalog);
+      const guestSnapshot = loadPracticeSnapshot(guestStorageRef.current, catalog);
+      const merged = mergePracticeStates(accountSnapshot.state, guestSnapshot.state);
+      storageRef.current = accountStorage;
+      savePracticeState(accountStorage, merged, accountSnapshot.generation);
+      progressGenerationRef.current = accountSnapshot.generation;
+      setPracticeState(merged);
+      setCurrentQuestionId(filterQuestions(catalog, filters, merged)[0]?.id ?? null);
+      setQuestionEpoch((epoch) => epoch + 1);
+      queueCloudSync(uid, true);
+    } else {
+      storageRef.current = guestStorageRef.current;
+      const guest = loadPracticeSnapshot(guestStorageRef.current, catalog);
+      progressGenerationRef.current = guest.generation;
+      setPracticeState(guest.state);
+      setCurrentQuestionId(filterQuestions(catalog, filters, guest.state)[0]?.id ?? null);
+      setQuestionEpoch((epoch) => epoch + 1);
+      setSyncStatus("local");
+    }
+  }, [catalog, filters, identity, queueCloudSync]);
 
   const persistAttempt = useCallback(
     (nextState: PracticeState) => {
@@ -187,8 +286,9 @@ export default function App() {
         mergePracticeStates(stored.state, nextState),
         generation,
       );
+      if (accountUidRef.current) queueCloudSync(accountUidRef.current);
     },
-    [catalog],
+    [catalog, queueCloudSync],
   );
 
   const requestQuestionDetail = useCallback((meta: QuestionMeta) => {
@@ -426,7 +526,7 @@ export default function App() {
     choosePoolStart(nextFilters);
   };
 
-  const submitAnswer = (response: string): boolean => {
+  const submitAnswer = (response: string, durationMs: number): boolean => {
     if (detailState.status !== "ready") {
       return false;
     }
@@ -438,6 +538,7 @@ export default function App() {
       response,
       correct,
       createdAt: new Date().toISOString(),
+      durationMs,
     };
     const nextState = recordAttempt(practiceState, attempt);
     setPracticeState(nextState);
@@ -449,7 +550,38 @@ export default function App() {
     activateQuestion(nextQuestionInPool(pool, currentQuestionId));
   };
 
-  const confirmReset = () => {
+  const confirmReset = async () => {
+    const uid = accountUidRef.current;
+    if (uid) {
+      setResetSaving(true);
+      setResetError(null);
+      try {
+        await syncQueueRef.current;
+        if (accountUidRef.current !== uid) return;
+        const { resetCloudProgress } = await loadCloud();
+        const reset = await resetCloudProgress(uid);
+        if (accountUidRef.current !== uid) return;
+        guestStorageRef.current.removeItem?.(PRACTICE_STORAGE_KEY);
+        if (!savePracticeState(storageRef.current, reset.state, reset.generation)) {
+          throw new Error("Cloud history cleared, but the browser copy could not update. Reload to refresh it.");
+        }
+        progressGenerationRef.current = reset.generation;
+        setPracticeState(reset.state);
+        setSyncStatus("synced");
+        setResetOpen(false);
+        setView("practice");
+        setFilters(DEFAULT_FILTERS);
+        choosePoolStart(DEFAULT_FILTERS, reset.state);
+      } catch (error) {
+        setResetError(error instanceof Error && error.message.startsWith("Cloud history")
+          ? error.message
+          : "Cloud progress could not be reset. Nothing was erased; try again while online.");
+      } finally {
+        setResetSaving(false);
+      }
+      return;
+    }
+
     const nextGeneration = (progressGenerationRef.current ?? 0) + 1;
     const nextState = initialPracticeState();
     if (!savePracticeState(storageRef.current, nextState, nextGeneration)) {
@@ -503,6 +635,34 @@ export default function App() {
         </nav>
 
         <div className="header-progress">
+          {isCloudConfigured() ? (
+            identity.account ? (
+              <div className="account-control">
+                <span className="account-name" title={identity.account.email ?? undefined}>
+                  {identity.account.email ?? identity.account.displayName ?? "Google account"}
+                </span>
+                <span className={`sync-indicator is-${syncStatus}`}>
+                  {syncStatus === "synced" ? "Synced" : syncStatus === "syncing" ? "Syncing…" : syncStatus === "error" ? "Sync paused" : "Local"}
+                </span>
+                {syncStatus === "error" ? (
+                  <button className="account-link" type="button" onClick={() => queueCloudSync(identity.account!.uid)}>Retry</button>
+                ) : null}
+                <button className="account-link" type="button" onClick={() => void loadCloud().then(({ signOutAccount }) => signOutAccount()).catch(() => setAuthError("Could not sign out. Try again."))}>Sign out</button>
+              </div>
+            ) : (
+              <button
+                className="google-signin"
+                type="button"
+                disabled={!identity.ready}
+                onClick={() => {
+                  setAuthError(null);
+                  void loadCloud().then(({ signInWithGoogle }) => signInWithGoogle()).catch(() => setAuthError("Google sign-in did not finish. Try again."));
+                }}
+              >
+                Continue with Google
+              </button>
+            )
+          ) : null}
           <span className="streak"><i aria-hidden="true" />{streak} day streak</span>
           <button
             className="reset-trigger"
@@ -518,13 +678,15 @@ export default function App() {
         </div>
       </header>
 
+      {authError ? <p className="account-error" role="alert">{authError}</p> : null}
+
       <main>
         {catalogStatus === "loading" ? (
           <section className="service-state" aria-live="polite">
             <span className="loading-pulse" aria-hidden="true" />
             <p className="section-index">Connecting to the live bank</p>
             <h1>Loading released SAT questions…</h1>
-            <p>Fetching the current College Board catalog. Your saved progress stays on this device.</p>
+            <p>Fetching the current College Board catalog. Your saved progress is ready on this device.</p>
           </section>
         ) : null}
 
@@ -647,14 +809,16 @@ export default function App() {
           <section className="reset-dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" aria-describedby="reset-description">
             <p className="section-index">Reset progress</p>
             <h2 id="reset-title">Erase this memory trace?</h2>
-            <p id="reset-description">This permanently clears attempts, unresolved misses, and miss history stored on this device.</p>
+            <p id="reset-description">{identity.account
+              ? "This permanently clears attempts, unresolved misses, and miss history from this Google account and this browser."
+              : "This permanently clears attempts, unresolved misses, and miss history stored on this device."}</p>
             {resetError ? <p className="reset-error" role="alert">{resetError}</p> : null}
             <div className="dialog-actions">
-              <button className="button button-quiet" type="button" ref={resetCancelRef} onClick={() => setResetOpen(false)}>
+              <button className="button button-quiet" type="button" ref={resetCancelRef} disabled={resetSaving} onClick={() => setResetOpen(false)}>
                 Keep progress
               </button>
-              <button className="button button-danger" type="button" onClick={confirmReset}>
-                Reset everything
+              <button className="button button-danger" type="button" disabled={resetSaving} onClick={() => void confirmReset()}>
+                {resetSaving ? "Resetting…" : "Reset everything"}
               </button>
             </div>
           </section>

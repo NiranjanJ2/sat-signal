@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "dompurify": "^3.4.12",
+    "firebase": "^12.19.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

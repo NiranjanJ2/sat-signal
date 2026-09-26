@@ -6,12 +6,39 @@ export const PRACTICE_STORAGE_KEY = "sat-practice-state";
 export type StorageLike = {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
 };
 
 export type PracticeSnapshot = {
   state: PracticeState;
   generation: number | null;
 };
+
+export function scopedStorage(storage: StorageLike, userId: string): StorageLike {
+  const key = `${PRACTICE_STORAGE_KEY}:${userId}`;
+  return {
+    getItem: () => storage.getItem(key),
+    setItem: (_ignored, value) => storage.setItem(key, value),
+  };
+}
+
+export function mergePracticeSnapshots(
+  local: PracticeSnapshot,
+  remote: PracticeSnapshot,
+  guest?: PracticeState,
+): PracticeSnapshot {
+  const localGeneration = local.generation ?? 0;
+  const remoteGeneration = remote.generation ?? 0;
+  const base = localGeneration === remoteGeneration
+    ? {
+      generation: localGeneration,
+      state: mergePracticeStates(local.state, remote.state),
+    }
+    : localGeneration > remoteGeneration ? local : remote;
+  return guest?.attempts.length
+    ? { ...base, state: mergePracticeStates(base.state, guest) }
+    : base;
+}
 
 export function loadPracticeState(
   storage: StorageLike,
@@ -165,7 +192,11 @@ function isAttempt(value: unknown): value is Attempt {
     typeof value.correct === "boolean" &&
     typeof value.createdAt === "string" &&
     value.createdAt.trim().length > 0 &&
-    !Number.isNaN(Date.parse(value.createdAt))
+    !Number.isNaN(Date.parse(value.createdAt)) &&
+    (value.durationMs === undefined ||
+      (typeof value.durationMs === "number" &&
+        Number.isFinite(value.durationMs) &&
+        value.durationMs >= 0))
   );
 }
 

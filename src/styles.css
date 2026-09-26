@@ -179,6 +179,54 @@ input:focus-visible,
   gap: 1rem;
 }
 
+.google-signin {
+  min-height: 36px;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-small);
+  background: var(--white);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.google-signin:hover { background: var(--blue-pale); }
+
+.account-control {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.69rem;
+}
+
+.account-name {
+  max-width: 145px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-indicator { color: var(--correct); white-space: nowrap; }
+.sync-indicator.is-error { color: var(--incorrect); }
+
+.account-link {
+  min-height: 36px;
+  padding: 0 0.2rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+.account-error {
+  margin: 0 var(--page-pad);
+  padding: 0.45rem 0;
+  color: var(--incorrect);
+  font-size: 0.75rem;
+}
+
 .streak {
   display: inline-flex;
   align-items: center;
@@ -712,7 +760,16 @@ main {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 1rem;
+}
+
+.question-stopwatch {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .calculator-panel {
@@ -1397,6 +1454,11 @@ main {
 
   .header-progress {
     gap: 0.45rem;
+  }
+
+  .account-name,
+  .sync-indicator {
+    display: none;
   }
 
   .streak {

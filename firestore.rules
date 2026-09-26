@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/progress/current {
+      allow get: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['version', 'generation', 'attempts'])
+        && request.resource.data.version == 2
+        && request.resource.data.generation is int
+        && request.resource.data.attempts is list;
+      allow list, delete: if false;
+    }
+  }
+}

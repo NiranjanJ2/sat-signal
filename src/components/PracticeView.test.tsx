@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PracticeView } from "./PracticeView";
 import type { QuestionDetail } from "../types";
 
@@ -50,6 +50,25 @@ const pressEnter = (target: Element = document.body) => {
 };
 
 describe("PracticeView keyboard flow", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("times the current question and stops when the answer is checked", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T12:00:00.000Z"));
+    const { onSubmit } = renderView();
+
+    expect(screen.getByText("00:00")).toBeVisible();
+    act(() => vi.advanceTimersByTime(65_000));
+    expect(screen.getByText("01:05")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("radio", { name: /4/ }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    expect(onSubmit).toHaveBeenCalledWith("B", 65_000);
+
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.getByText("01:05")).toBeVisible();
+  });
+
   it("checks on Enter, then advances on the next Enter", () => {
     const { onSubmit, onNext } = renderView();
 
@@ -59,7 +78,7 @@ describe("PracticeView keyboard flow", () => {
 
     fireEvent.click(screen.getByRole("radio", { name: /4/ }));
     pressEnter();
-    expect(onSubmit).toHaveBeenCalledWith("B");
+    expect(onSubmit).toHaveBeenCalledWith("B", expect.any(Number));
     expect(screen.getByText("Correct.")).toBeInTheDocument();
     expect(onNext).not.toHaveBeenCalled();
 

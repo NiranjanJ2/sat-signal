@@ -2,11 +2,35 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { PRACTICE_STORAGE_KEY } from "./lib/storage";
+import { hydratePracticeStateDocument } from "./lib/storage";
 import type { QuestionDetail, QuestionMeta } from "./types";
 
 const qbankMocks = vi.hoisted(() => ({
   loadCatalog: vi.fn(),
   fetchQuestionDetail: vi.fn(),
+}));
+
+const cloudMocks = vi.hoisted(() => ({
+  enabled: false,
+  accountChanged: null as null | ((account: { uid: string; displayName: string | null; email: string | null } | null) => void),
+  sync: vi.fn(),
+  reset: vi.fn(),
+}));
+
+vi.mock("./lib/cloud-config", () => ({
+  isCloudConfigured: () => cloudMocks.enabled,
+}));
+
+vi.mock("./lib/cloud", () => ({
+  onAccountChanged: (callback: typeof cloudMocks.accountChanged) => {
+    cloudMocks.accountChanged = callback;
+    callback?.(null);
+    return () => {};
+  },
+  signInWithGoogle: async () => cloudMocks.accountChanged?.({ uid: "google-a", displayName: "Alex", email: "alex@example.com" }),
+  signOutAccount: async () => cloudMocks.accountChanged?.(null),
+  syncCloudProgress: cloudMocks.sync,
+  resetCloudProgress: cloudMocks.reset,
 }));
 
 vi.mock("./lib/qbank", async (importOriginal) => {
@@ -79,6 +103,124 @@ describe("SAT practice app", () => {
     window.localStorage.clear();
     qbankMocks.loadCatalog.mockReset();
     qbankMocks.fetchQuestionDetail.mockReset();
+    cloudMocks.enabled = false;
+    cloudMocks.accountChanged = null;
+    cloudMocks.sync.mockReset();
+    cloudMocks.sync.mockImplementation(async (_uid, snapshot) => snapshot);
+    cloudMocks.reset.mockReset();
+  });
+
+  it("moves guest history into a signed-in Google account", async () => {
+    cloudMocks.enabled = true;
+    prepareSuccess();
+    window.localStorage.setItem(PRACTICE_STORAGE_KEY, JSON.stringify({
+      version: 2,
+      attempts: [{
+        id: "guest-attempt", questionId: "rw-1", response: "A", correct: true,
+        createdAt: "2026-09-26T12:00:00.000Z",
+      }],
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /what is the value of x/i });
+    fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
+
+    expect(await screen.findByText(/alex@example.com/i)).toBeVisible();
+    await waitFor(() => expect(JSON.parse(
+      window.localStorage.getItem(`${PRACTICE_STORAGE_KEY}:google-a`) ?? "{}",
+    ).attempts).toEqual([expect.objectContaining({ id: "guest-attempt" })]));
+    expect(window.localStorage.getItem(PRACTICE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("uses cloud history to skip answered questions after sign-in", async () => {
+    cloudMocks.enabled = true;
+    prepareSuccess();
+    cloudMocks.sync.mockResolvedValue({
+      generation: 0,
+      state: hydratePracticeStateDocument({ version: 2, attempts: [{
+        id: "cloud-attempt", questionId: "rw-1", response: "A", correct: true,
+        createdAt: "2026-09-26T12:00:00.000Z",
+      }] }, catalog),
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
+
+    expect(await screen.findByRole("heading", { name: /what is the value of x/i })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: /which choice best states/i })).not.toBeInTheDocument();
+  });
+
+  it("does not show the first account's cached answers after switching accounts", async () => {
+    cloudMocks.enabled = true;
+    prepareSuccess();
+    window.localStorage.setItem(`${PRACTICE_STORAGE_KEY}:google-a`, JSON.stringify({
+      version: 2,
+      attempts: [{
+        id: "a-only", questionId: "rw-1", response: "A", correct: true,
+        createdAt: "2026-09-26T12:00:00.000Z",
+      }],
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
+    await screen.findByRole("heading", { name: /what is the value of x/i });
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    await act(async () => cloudMocks.accountChanged?.({
+      uid: "google-b", displayName: "Bea", email: "bea@example.com",
+    }));
+
+    expect(screen.getByText(/bea@example.com/i)).toBeVisible();
+    expect(screen.getByRole("heading", { name: /which choice best states/i })).toBeVisible();
+    expect(window.localStorage.getItem(`${PRACTICE_STORAGE_KEY}:google-b`)).not.toContain("a-only");
+  });
+
+  it("clears account history in the cloud before clearing the browser copy", async () => {
+    cloudMocks.enabled = true;
+    prepareSuccess();
+    cloudMocks.reset.mockResolvedValue({
+      generation: 1,
+      state: hydratePracticeStateDocument({ version: 2, attempts: [] }, catalog),
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
+    await screen.findByText(/alex@example.com/i);
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^reset$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reset everything/i }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(JSON.parse(window.localStorage.getItem(`${PRACTICE_STORAGE_KEY}:google-a`) ?? "{}")).toMatchObject({
+      generation: 1,
+      attempts: [],
+    });
+    expect(window.localStorage.getItem(PRACTICE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("does not reset a Google account after it has been signed out", async () => {
+    cloudMocks.enabled = true;
+    prepareSuccess();
+    let finishSync!: (snapshot: unknown) => void;
+    cloudMocks.sync.mockImplementationOnce((_uid, snapshot) => new Promise((resolve) => {
+      finishSync = () => resolve(snapshot);
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
+    await screen.findByText(/alex@example.com/i);
+    fireEvent.click(screen.getByRole("button", { name: /^reset$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reset everything/i }));
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+    await screen.findByRole("button", { name: /continue with google/i });
+    await act(async () => finishSync(undefined));
+
+    expect(cloudMocks.reset).not.toHaveBeenCalled();
   });
 
   it("loads the current question, prefetches one lookahead, and advances from memory", async () => {
@@ -251,9 +393,10 @@ describe("SAT practice app", () => {
     expect(screen.getByText(/the text links two elevation-specific trends/i)).toBeVisible();
 
     const raw = window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "";
-    const saved = JSON.parse(raw) as { version?: number; attempts?: unknown[] };
+    const saved = JSON.parse(raw) as { version?: number; attempts?: { durationMs?: number }[] };
     expect(saved.version).toBe(2);
     expect(saved.attempts).toHaveLength(1);
+    expect(saved.attempts?.[0]?.durationMs).toEqual(expect.any(Number));
     expect(raw).not.toContain("Which choice");
     expect(raw).not.toContain("rationale");
   });

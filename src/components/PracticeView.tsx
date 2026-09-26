@@ -24,7 +24,7 @@ type PracticeViewProps = {
   attemptedCount: number;
   queueMode: Filters["mode"];
   focusQuestion: boolean;
-  onSubmit: (response: string) => boolean;
+  onSubmit: (response: string, durationMs: number) => boolean;
   onNext: () => void;
   onRetryDetail: () => void;
   onPracticeAll: () => void;
@@ -37,6 +37,9 @@ const acceptedAnswerText = (question: QuestionDetail): string =>
   question.correctAnswers.length === 1
     ? question.correctAnswers[0] ?? "Unavailable"
     : question.correctAnswers.join(", ");
+
+const formatElapsed = (seconds: number): string =>
+  `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 
 export function PracticeView({
   currentMeta,
@@ -56,6 +59,8 @@ export function PracticeView({
   const [submitted, setSubmitted] = useState(false);
   const [correct, setCorrect] = useState(false);
   const [calculatorOpen, setCalculatorOpen] = useState(isCalculatorOpen);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const startedAtRef = useRef<number | null>(null);
   const submittedRef = useRef(false);
   const headingRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +69,18 @@ export function PracticeView({
       headingRef.current?.focus();
     }
   }, [detailState.status, focusQuestion]);
+
+  useEffect(() => {
+    if (detailState.status !== "ready" || submitted) {
+      return;
+    }
+
+    startedAtRef.current ??= Date.now();
+    const interval = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current!) / 1000));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [detailState.status, submitted]);
 
   const toggleCalculator = (open: boolean) => {
     rememberCalculatorOpen(open);
@@ -77,7 +94,9 @@ export function PracticeView({
     }
 
     submittedRef.current = true;
-    setCorrect(onSubmit(cleanResponse));
+    const durationMs = Math.max(0, Date.now() - (startedAtRef.current ?? Date.now()));
+    setElapsedSeconds(Math.floor(durationMs / 1000));
+    setCorrect(onSubmit(cleanResponse, durationMs));
     setSubmitted(true);
   }, [onSubmit, response]);
 
@@ -206,6 +225,9 @@ export function PracticeView({
             <p className="skill-name">{question.skill}</p>
           </div>
           <div className="question-meta-actions">
+            <span className="question-stopwatch" aria-label={`Time on question ${formatElapsed(elapsedSeconds)}`}>
+              <span aria-hidden="true">◷</span> {formatElapsed(elapsedSeconds)}
+            </span>
             {question.section === "math" ? (
               <button
                 className="button button-quiet calculator-toggle"

@@ -7,7 +7,9 @@ import {
   loadPracticeSnapshot,
   loadPracticeState,
   mergePracticeStates,
+  mergePracticeSnapshots,
   savePracticeState,
+  scopedStorage,
   type StorageLike,
 } from "./storage";
 
@@ -21,6 +23,53 @@ const memoryStorage = (value: string | null = null): StorageLike & {
   setItem(_key, next) {
     this.current = next;
   },
+});
+
+describe("account progress", () => {
+  it("keeps browser copies for different Google accounts separate", () => {
+    const values = new Map<string, string>();
+    const backing: StorageLike = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => { values.set(key, value); },
+    };
+    const first = scopedStorage(backing, "google-user-a");
+    const second = scopedStorage(backing, "google-user-b");
+    savePracticeState(first, initialPracticeState(), 3);
+
+    expect(loadPracticeSnapshot(first, catalog).generation).toBe(3);
+    expect(loadPracticeSnapshot(second, catalog).generation).toBeNull();
+  });
+
+  it("unions concurrent attempts but honors a newer reset generation", () => {
+    const local = hydratePracticeStateDocument({
+      version: 2,
+      attempts: [{
+        id: "local", questionId: "external-q-1", response: "A", correct: true,
+        createdAt: "2026-09-26T12:00:00.000Z",
+      }],
+    }, catalog);
+    const remote = hydratePracticeStateDocument({
+      version: 2,
+      attempts: [{
+        id: "remote", questionId: "external-q-1", response: "B", correct: false,
+        createdAt: "2026-09-26T12:01:00.000Z",
+      }],
+    }, catalog);
+
+    expect(mergePracticeSnapshots(
+      { state: local, generation: 2 },
+      { state: remote, generation: 2 },
+    ).state.attempts.map((attempt) => attempt.id)).toEqual(["local", "remote"]);
+    expect(mergePracticeSnapshots(
+      { state: local, generation: 2 },
+      { state: initialPracticeState(), generation: 3 },
+    ).state.attempts).toEqual([]);
+    expect(mergePracticeSnapshots(
+      { state: local, generation: 2 },
+      { state: initialPracticeState(), generation: 3 },
+      remote,
+    ).state.attempts.map((attempt) => attempt.id)).toEqual(["remote"]);
+  });
 });
 
 const catalog: QuestionMeta[] = [
