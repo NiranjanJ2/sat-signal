@@ -774,9 +774,8 @@ main {
 
 .calculator-panel {
   align-self: stretch;
-  padding: clamp(1.25rem, 2vw, 1.75rem) clamp(1rem, 1.6vw, 1.5rem);
   border-left: 1px solid var(--ink);
-  background: #f0f3fa;
+  background: var(--white);
 }
 
 .calculator-toggle {
@@ -788,18 +787,14 @@ main {
 }
 
 .calculator-host {
-  position: sticky;
-  top: 1rem;
   width: 100%;
-  height: min(68vh, 560px);
-  border: 1px solid var(--ink);
-  border-radius: var(--radius-small);
-  background: var(--white);
+  height: 100%;
+  min-height: min(68vh, 560px);
   overflow: hidden;
 }
 
 .calculator-error {
-  margin-top: 0.9rem;
+  margin: 1rem;
   color: var(--incorrect);
   font-size: 0.8rem;
 }
