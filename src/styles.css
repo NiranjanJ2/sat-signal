@@ -738,8 +738,11 @@ main {
    The toggle lives in the question header, so it never moves with the split. */
 .practice-surface:has(.calculator-panel) {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* Break out of the page gutter to 1rem, and hand the reclaimed width to the
+     calculator: the question column keeps exactly its old half-width. */
+  grid-template-columns: calc(50% - var(--page-pad) + 1rem) minmax(0, 1fr);
   align-items: start;
+  margin-inline: calc(1rem - var(--page-pad));
 }
 
 .practice-surface:has(.calculator-panel) > .question-meta,
@@ -1418,6 +1421,7 @@ main {
 
   .practice-surface:has(.calculator-panel) {
     grid-template-columns: 1fr;
+    margin-inline: 0;
   }
 
   .calculator-panel {
