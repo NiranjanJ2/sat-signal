@@ -424,4 +424,25 @@ describe("gradeResponse", () => {
     expect(gradeResponse(detail, "Infinity")).toBe(false);
     expect(gradeResponse(detail, " ")).toBe(false);
   });
+
+  it("accepts typed square roots when they equal a student-produced answer", () => {
+    const detail: QuestionDetail = {
+      ...standardMeta,
+      kind: "student-produced-response",
+      stimulusHtml: "",
+      promptHtml: "<p>Enter a value.</p>",
+      choices: [],
+      correctAnswers: ["2", "√3", "0.5"],
+      rationaleHtml: "",
+    };
+
+    expect(gradeResponse(detail, "sqrt(4)")).toBe(true);
+    expect(gradeResponse(detail, "√4")).toBe(true);
+    expect(gradeResponse(detail, "sqrt(1/4)")).toBe(true);
+    expect(gradeResponse(detail, "sqrt(3)")).toBe(true);
+    expect(gradeResponse(detail, "sqrt(-4)")).toBe(false);
+    expect(gradeResponse(detail, "sqrt( )")).toBe(false);
+    expect(gradeResponse(detail, "sqrt(4+0)")).toBe(false);
+    expect(gradeResponse(detail, "sqrt(2,3)")).toBe(false);
+  });
 });

@@ -513,10 +513,20 @@ function normalizedId(value: string): string {
 }
 
 function normalizeResponse(value: string): string {
-  return value.trim().replaceAll(",", "").replaceAll("−", "-").toUpperCase();
+  const normalized = value.trim().replaceAll("−", "-").toUpperCase();
+  return /√|SQRT/.test(normalized) ? normalized : normalized.replaceAll(",", "");
 }
 
 function parseFiniteNumber(value: string): number | null {
+  if (!value.trim()) return null;
+  const radical = /^([+-]?)(?:SQRT\(([^()]+)\)|√\(([^()]+)\)|√(\d+(?:\.\d*)?|\.\d+))$/.exec(value);
+  if (radical) {
+    const radicand = parseFiniteNumber(radical[2] ?? radical[3] ?? radical[4]);
+    return radicand !== null && radicand >= 0
+      ? (radical[1] === "-" ? -1 : 1) * Math.sqrt(radicand)
+      : null;
+  }
+
   const fraction = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\/([+-]?(?:\d+(?:\.\d*)?|\.\d+))$/.exec(
     value,
   );

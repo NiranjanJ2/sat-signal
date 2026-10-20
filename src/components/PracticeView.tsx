@@ -324,14 +324,14 @@ export function PracticeView({
                   <label htmlFor={`answer-${question.id}`}>Student-produced response</label>
                   <input
                     id={`answer-${question.id}`}
-                    inputMode="decimal"
+                    inputMode="text"
                     autoComplete="off"
                     value={showAnswers ? response : ""}
                     onChange={(event) => {
                       setResponse(event.target.value);
                       onDraftChange(event.target.value);
                     }}
-                    placeholder="Type a number, decimal, or fraction"
+                    placeholder="Type a number, fraction, or sqrt(2)"
                   />
                 </fieldset>
               )}
@@ -342,7 +342,7 @@ export function PracticeView({
                     Check answer
                   </button>
                   <span className="keyboard-hint">
-                    Enter checks · {question.kind === "multiple-choice" ? "arrow keys move choices" : "fractions such as 3/4 are accepted"}
+                    Enter checks · {question.kind === "multiple-choice" ? "arrow keys move choices" : "fractions (3/4) and roots (sqrt(2) or √2) work"}
                   </span>
                 </div>
               ) : showAnswers ? (

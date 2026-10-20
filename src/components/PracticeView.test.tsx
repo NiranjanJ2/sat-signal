@@ -58,6 +58,27 @@ const pressEnter = (target: Element = document.body) => {
 describe("PracticeView keyboard flow", () => {
   afterEach(() => vi.useRealTimers());
 
+  it("lets students type a square-root answer", () => {
+    const rootQuestion: QuestionDetail = {
+      ...question,
+      kind: "student-produced-response",
+      choices: [],
+      correctAnswers: ["2"],
+    };
+    const { onSubmit } = renderView({
+      currentMeta: rootQuestion,
+      detailState: { status: "ready", questionId: rootQuestion.id, question: rootQuestion },
+      pool: [rootQuestion],
+    });
+
+    const answer = screen.getByRole("textbox", { name: "Student-produced response" });
+    expect(answer).toHaveAttribute("inputmode", "text");
+    fireEvent.change(answer, { target: { value: "sqrt(4)" } });
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    expect(onSubmit).toHaveBeenCalledWith("sqrt(4)", expect.any(Number));
+    expect(screen.getByText("Correct.")).toBeInTheDocument();
+  });
+
   it("times the current question and stops when the answer is checked", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-26T12:00:00.000Z"));
