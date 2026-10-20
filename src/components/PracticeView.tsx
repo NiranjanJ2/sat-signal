@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { gradeResponse } from "../lib/qbank";
-import type { Filters, QuestionDetail, QuestionMeta, TopicStat } from "../types";
+import type { Attempt, Filters, QuestionDetail, QuestionMeta, TopicStat } from "../types";
 import {
   DesmosPanel,
   isCalculatorOpen,
@@ -17,6 +17,11 @@ type DetailState =
 
 type PracticeViewProps = {
   currentMeta: QuestionMeta | null;
+  pastAttempt: Attempt | null;
+  canGoBack: boolean;
+  initialResponse: string;
+  initialElapsedMs: number;
+  onDraftChange: (response: string) => void;
   detailState: DetailState;
   pool: readonly QuestionMeta[];
   stats: readonly TopicStat[];
@@ -25,6 +30,7 @@ type PracticeViewProps = {
   queueMode: Filters["mode"];
   focusQuestion: boolean;
   onSubmit: (response: string, durationMs: number) => boolean;
+  onBack: (elapsedMs: number) => void;
   onNext: () => void;
   onRetryDetail: () => void;
   onPracticeAll: () => void;
@@ -43,6 +49,11 @@ const formatElapsed = (seconds: number): string =>
 
 export function PracticeView({
   currentMeta,
+  pastAttempt,
+  canGoBack,
+  initialResponse,
+  initialElapsedMs,
+  onDraftChange,
   detailState,
   pool,
   stats,
@@ -51,17 +62,19 @@ export function PracticeView({
   queueMode,
   focusQuestion,
   onSubmit,
+  onBack,
   onNext,
   onRetryDetail,
   onPracticeAll,
 }: PracticeViewProps) {
-  const [response, setResponse] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-  const [correct, setCorrect] = useState(false);
+  const [response, setResponse] = useState(pastAttempt?.response ?? initialResponse);
+  const [submitted, setSubmitted] = useState(Boolean(pastAttempt));
+  const [correct, setCorrect] = useState(pastAttempt?.correct ?? false);
+  const [showAnswers, setShowAnswers] = useState(true);
   const [calculatorOpen, setCalculatorOpen] = useState(isCalculatorOpen);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(Math.floor((pastAttempt?.durationMs ?? initialElapsedMs) / 1000));
   const startedAtRef = useRef<number | null>(null);
-  const submittedRef = useRef(false);
+  const submittedRef = useRef(Boolean(pastAttempt));
   const headingRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -77,10 +90,10 @@ export function PracticeView({
 
     startedAtRef.current ??= Date.now();
     const interval = window.setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current!) / 1000));
+      setElapsedSeconds(Math.floor((initialElapsedMs + Date.now() - startedAtRef.current!) / 1000));
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [detailState.status, submitted]);
+  }, [detailState.status, initialElapsedMs, submitted]);
 
   const toggleCalculator = (open: boolean) => {
     rememberCalculatorOpen(open);
@@ -89,16 +102,20 @@ export function PracticeView({
 
   const checkAnswer = useCallback(() => {
     const cleanResponse = response.trim();
-    if (!cleanResponse || submittedRef.current) {
+    if (!cleanResponse || submittedRef.current || pastAttempt) {
       return;
     }
 
     submittedRef.current = true;
-    const durationMs = Math.max(0, Date.now() - (startedAtRef.current ?? Date.now()));
+    const durationMs = initialElapsedMs + Math.max(0, Date.now() - (startedAtRef.current ?? Date.now()));
     setElapsedSeconds(Math.floor(durationMs / 1000));
     setCorrect(onSubmit(cleanResponse, durationMs));
     setSubmitted(true);
-  }, [onSubmit, response]);
+  }, [initialElapsedMs, onSubmit, pastAttempt, response]);
+
+  const goBack = () => onBack(pastAttempt
+    ? 0
+    : initialElapsedMs + Math.max(0, Date.now() - (startedAtRef.current ?? Date.now())));
 
   useEffect(() => {
     if (detailState.status !== "ready") {
@@ -155,6 +172,7 @@ export function PracticeView({
         <button className="button button-primary" type="button" onClick={onPracticeAll}>
           Practice new questions
         </button>
+        {canGoBack ? <button className="button button-quiet" type="button" onClick={goBack}>Back to past question</button> : null}
       </section>
     );
   }
@@ -225,9 +243,21 @@ export function PracticeView({
             <p className="skill-name">{question.skill}</p>
           </div>
           <div className="question-meta-actions">
-            <span className="question-stopwatch" aria-label={`Time on question ${formatElapsed(elapsedSeconds)}`}>
-              <span aria-hidden="true">◷</span> {formatElapsed(elapsedSeconds)}
-            </span>
+            {canGoBack ? (
+              <button className="button button-quiet history-button" type="button" onClick={goBack}>
+                ← Back
+              </button>
+            ) : null}
+            {pastAttempt ? (
+              <button className="button button-quiet history-button" type="button" onClick={() => setShowAnswers((shown) => !shown)}>
+                {showAnswers ? "Hide answers" : "Show answers"}
+              </button>
+            ) : null}
+            {!pastAttempt || pastAttempt.durationMs !== undefined ? (
+              <span className="question-stopwatch" aria-label={`Time on question ${formatElapsed(elapsedSeconds)}`}>
+                <span aria-hidden="true">◷</span> {formatElapsed(elapsedSeconds)}
+              </span>
+            ) : null}
             {question.section === "math" ? (
               <button
                 className="button button-quiet calculator-toggle"
@@ -241,7 +271,7 @@ export function PracticeView({
               </button>
             ) : null}
             <span className="queue-position">
-              {position === null ? "Retry answered" : `Question ${position} of ${pool.length}`}
+              {pastAttempt ? "Past question · read-only" : position === null ? "Retry answered" : `Question ${position} of ${pool.length}`}
             </span>
           </div>
         </header>
@@ -264,8 +294,8 @@ export function PracticeView({
                 <fieldset className="answer-list" disabled={submitted}>
                   <legend>Choose the best answer</legend>
                   {question.choices.map((choice) => {
-                    const isCorrectAnswer = submitted && gradeResponse(question, choice.label);
-                    const isWrongSelection = submitted && response === choice.label && !isCorrectAnswer;
+                    const isCorrectAnswer = submitted && showAnswers && gradeResponse(question, choice.label);
+                    const isWrongSelection = submitted && showAnswers && response === choice.label && !isCorrectAnswer;
                     const stateClass = isCorrectAnswer ? " is-correct" : isWrongSelection ? " is-incorrect" : "";
 
                     return (
@@ -274,8 +304,11 @@ export function PracticeView({
                           type="radio"
                           name={`answer-${question.id}`}
                           value={choice.label}
-                          checked={response === choice.label}
-                          onChange={() => setResponse(choice.label)}
+                          checked={showAnswers && response === choice.label}
+                          onChange={() => {
+                            setResponse(choice.label);
+                            onDraftChange(choice.label);
+                          }}
                         />
                         <span className="answer-letter" aria-hidden="true">{choice.label}</span>
                         <RichHtml html={choice.html} className="answer-copy service-rich-text" />
@@ -293,8 +326,11 @@ export function PracticeView({
                     id={`answer-${question.id}`}
                     inputMode="decimal"
                     autoComplete="off"
-                    value={response}
-                    onChange={(event) => setResponse(event.target.value)}
+                    value={showAnswers ? response : ""}
+                    onChange={(event) => {
+                      setResponse(event.target.value);
+                      onDraftChange(event.target.value);
+                    }}
                     placeholder="Type a number, decimal, or fraction"
                   />
                 </fieldset>
@@ -309,7 +345,7 @@ export function PracticeView({
                     Enter checks · {question.kind === "multiple-choice" ? "arrow keys move choices" : "fractions such as 3/4 are accepted"}
                   </span>
                 </div>
-              ) : (
+              ) : showAnswers ? (
                 <div className={`feedback${correct ? " is-correct" : " is-incorrect"}`}>
                   <div className="feedback-heading" role="status" aria-live="polite">
                     <span className="feedback-icon" aria-hidden="true">{correct ? "✓" : "↗"}</span>
@@ -328,6 +364,11 @@ export function PracticeView({
                     </button>
                     <span>{correct ? "This topic just got a little stronger." : "This question is now in your retry queue."}</span>
                   </div>
+                </div>
+              ) : (
+                <div className="question-actions">
+                  <button className="button button-primary" type="button" onClick={onNext}>Next question</button>
+                  <span className="keyboard-hint">Past answer hidden · read-only</span>
                 </div>
               )}
             </form>

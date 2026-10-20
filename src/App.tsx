@@ -156,6 +156,7 @@ export default function App() {
   const detailCacheRef = useRef(new Map<string, QuestionDetail>());
   const detailRequestsRef = useRef(new Map<string, DetailRequest>());
   const progressGenerationRef = useRef<number | null>(null);
+  const submittedCurrentRef = useRef<string | null>(null);
 
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
   const [catalog, setCatalog] = useState<QuestionMeta[]>([]);
@@ -175,6 +176,9 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("practice");
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(null);
+  const [historyAttemptId, setHistoryAttemptId] = useState<string | null>(null);
+  const [draftResponse, setDraftResponse] = useState("");
+  const [draftElapsedMs, setDraftElapsedMs] = useState(0);
   const [questionEpoch, setQuestionEpoch] = useState(0);
   const [detailRetry, setDetailRetry] = useState(0);
   const [detailState, setDetailState] = useState<DetailState>({ status: "idle" });
@@ -244,6 +248,10 @@ export default function App() {
     const uid = identity.account?.uid ?? null;
     if (uid === accountUidRef.current) return;
     accountUidRef.current = uid;
+    setHistoryAttemptId(null);
+    setDraftResponse("");
+    setDraftElapsedMs(0);
+    submittedCurrentRef.current = null;
 
     if (uid) {
       const accountStorage = scopedStorage(guestStorageRef.current, uid);
@@ -349,6 +357,10 @@ export default function App() {
         setCatalog(nextCatalog);
         setPracticeState(snapshot.state);
         setCurrentQuestionId(nextPool[0]?.id ?? null);
+        setHistoryAttemptId(null);
+        setDraftResponse("");
+        setDraftElapsedMs(0);
+        submittedCurrentRef.current = null;
         setQuestionEpoch((epoch) => epoch + 1);
         setCatalogStatus("ready");
       })
@@ -381,9 +393,20 @@ export default function App() {
     () => deriveTopicStats(catalog, practiceState.attempts),
     [catalog, practiceState.attempts],
   );
-  const currentMeta = currentQuestionId
+  const liveMeta = currentQuestionId
     ? (questionById.get(currentQuestionId) ?? null)
     : null;
+  const historyIndex = historyAttemptId
+    ? practiceState.attempts.findIndex((attempt) => attempt.id === historyAttemptId)
+    : -1;
+  const pastAttempt = historyIndex >= 0 ? practiceState.attempts[historyIndex] ?? null : null;
+  const currentMeta = pastAttempt
+    ? questionById.get(pastAttempt.questionId) ?? null
+    : liveMeta;
+  const canGoBack = practiceState.attempts.some((attempt, index) =>
+    index < (historyIndex >= 0 ? historyIndex : practiceState.attempts.length) &&
+    questionById.has(attempt.questionId),
+  );
   const streak = countStreak(practiceState.attempts);
 
   useEffect(() => {
@@ -442,6 +465,7 @@ export default function App() {
 
     const nextMeta = nextQuestionInPool(pool, currentQuestionId);
     const desiredIds = new Set([currentMeta.id]);
+    if (liveMeta) desiredIds.add(liveMeta.id);
     if (nextMeta && nextMeta.id !== currentMeta.id) {
       desiredIds.add(nextMeta.id);
     }
@@ -464,6 +488,7 @@ export default function App() {
     catalogStatus,
     currentMeta,
     currentQuestionId,
+    liveMeta,
     pool,
     requestQuestionDetail,
     view,
@@ -485,6 +510,9 @@ export default function App() {
   }, [resetOpen]);
 
   const activateQuestion = (question: QuestionMeta | undefined) => {
+    submittedCurrentRef.current = null;
+    setDraftResponse("");
+    setDraftElapsedMs(0);
     const questionId = question?.id ?? null;
     const cachedQuestion = questionId
       ? detailCacheRef.current.get(questionId)
@@ -505,6 +533,7 @@ export default function App() {
 
   const choosePoolStart = (nextFilters: Filters, state = practiceState) => {
     const nextPool = filterQuestions(catalog, nextFilters, state);
+    setHistoryAttemptId(null);
     activateQuestion(nextPool[0]);
   };
 
@@ -532,6 +561,7 @@ export default function App() {
     }
 
     const correct = gradeResponse(detailState.question, response);
+    submittedCurrentRef.current = detailState.question.id;
     const attempt: Attempt = {
       id: nextAttemptId(detailState.question.id),
       questionId: detailState.question.id,
@@ -546,7 +576,38 @@ export default function App() {
     return correct;
   };
 
+  const previousQuestion = (elapsedMs: number) => {
+    if (!pastAttempt) setDraftElapsedMs(elapsedMs);
+    if (!pastAttempt && submittedCurrentRef.current === currentQuestionId) {
+      submittedCurrentRef.current = null;
+      setDraftResponse("");
+      setDraftElapsedMs(0);
+      setCurrentQuestionId(nextQuestionInPool(pool, currentQuestionId)?.id ?? null);
+    }
+    for (let index = historyIndex >= 0 ? historyIndex - 1 : practiceState.attempts.length - 1; index >= 0; index--) {
+      const attempt = practiceState.attempts[index];
+      if (attempt && questionById.has(attempt.questionId)) {
+        setHistoryAttemptId(attempt.id);
+        setQuestionEpoch((epoch) => epoch + 1);
+        return;
+      }
+    }
+  };
+
   const nextQuestion = () => {
+    if (pastAttempt) {
+      for (let index = historyIndex + 1; index < practiceState.attempts.length; index++) {
+        const attempt = practiceState.attempts[index];
+        if (attempt && questionById.has(attempt.questionId)) {
+          setHistoryAttemptId(attempt.id);
+          setQuestionEpoch((epoch) => epoch + 1);
+          return;
+        }
+      }
+      setHistoryAttemptId(null);
+      setQuestionEpoch((epoch) => epoch + 1);
+      return;
+    }
     activateQuestion(nextQuestionInPool(pool, currentQuestionId));
   };
 
@@ -601,6 +662,7 @@ export default function App() {
   };
 
   const changeView = (nextView: ViewMode) => {
+    if (nextView !== "practice") setHistoryAttemptId(null);
     if (
       nextView === "practice" &&
       view !== "practice" &&
@@ -721,8 +783,13 @@ export default function App() {
               onChange={changeFilters}
             />
             <PracticeView
-              key={`${currentQuestionId ?? "empty"}-${questionEpoch}`}
+              key={`${pastAttempt?.id ?? currentQuestionId ?? "empty"}-${questionEpoch}`}
               currentMeta={currentMeta}
+              pastAttempt={pastAttempt}
+              canGoBack={canGoBack}
+              initialResponse={draftResponse}
+              initialElapsedMs={draftElapsedMs}
+              onDraftChange={setDraftResponse}
               detailState={detailState}
               pool={pool}
               stats={stats}
@@ -731,6 +798,7 @@ export default function App() {
               queueMode={filters.mode}
               focusQuestion={questionEpoch > 1}
               onSubmit={submitAnswer}
+              onBack={previousQuestion}
               onNext={nextQuestion}
               onRetryDetail={() => setDetailRetry((retry) => retry + 1)}
               onPracticeAll={practiceAll}

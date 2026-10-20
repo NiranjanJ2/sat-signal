@@ -249,6 +249,73 @@ describe("SAT practice app", () => {
     expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2);
   });
 
+  it("goes back through saved attempts without recording or changing them", async () => {
+    prepareSuccess();
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are unrelated/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next question/i }));
+    await screen.findByRole("heading", { name: /what is the value of x/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
+    expect(screen.getByRole("radio", { name: /the trends are unrelated/i })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /the trends are unrelated/i })).toBeChecked();
+    expect(screen.queryByRole("button", { name: /check answer/i })).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}").attempts).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /next question/i }));
+    expect(await screen.findByRole("heading", { name: /what is the value of x/i })).toBeVisible();
+    expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}").attempts).toHaveLength(1);
+  });
+
+  it("does not turn a just-answered question back into an editable question", async () => {
+    prepareSuccess();
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next question/i }));
+
+    expect(await screen.findByRole("heading", { name: /what is the value of x/i })).toBeVisible();
+    expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}").attempts).toHaveLength(1);
+  });
+
+  it("keeps an unfinished response while viewing a past question", async () => {
+    prepareSuccess();
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    fireEvent.click(screen.getByRole("radio", { name: /the trends are connected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next question/i }));
+    const input = await screen.findByRole("textbox", { name: /student-produced response/i });
+    fireEvent.change(input, { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next question/i }));
+
+    expect(await screen.findByRole("textbox", { name: /student-produced response/i })).toHaveValue("3");
+  });
+
+  it("can open a past question saved before this page load", async () => {
+    prepareSuccess();
+    window.localStorage.setItem(PRACTICE_STORAGE_KEY, JSON.stringify({
+      version: 2,
+      attempts: [{
+        id: "earlier", questionId: "rw-1", response: "B", correct: false,
+        createdAt: "2026-09-26T12:00:00.000Z",
+      }],
+    }));
+    render(<App />);
+    await screen.findByRole("heading", { name: /what is the value of x/i });
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+
+    expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
+    expect(screen.getByRole("radio", { name: /the trends are unrelated/i })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /the trends are unrelated/i })).toBeDisabled();
+  });
+
   it("starts the lookahead while the current question is still loading", async () => {
     let resolveCurrent!: (question: QuestionDetail) => void;
     const currentDetail = new Promise<QuestionDetail>((resolve) => {

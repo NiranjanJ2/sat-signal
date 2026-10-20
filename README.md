@@ -1,6 +1,6 @@
 # SAT Signal — live SAT practice
 
-SAT Signal is a practice loop over College Board's live SAT Question Bank. Filter by section, domain, skill, and difficulty; answer one problem at a time; retry unresolved misses; and watch topic accuracy accumulate in a persistent memory trace. Each question has a stopwatch that stops when you check your answer.
+SAT Signal is a practice loop over College Board's live SAT Question Bank. Filter by section, domain, skill, and difficulty; answer one problem at a time; retry unresolved misses; and watch topic accuracy accumulate in a persistent memory trace. Each question has a stopwatch that stops when you check your answer. Back opens saved attempts read-only; Hide answers conceals the selection and verdict until you reveal them.
 
 ## Run it
 

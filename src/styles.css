@@ -775,6 +775,12 @@ main {
   white-space: nowrap;
 }
 
+.history-button {
+  min-height: 36px;
+  padding: 0.35rem 0.65rem;
+  white-space: nowrap;
+}
+
 .calculator-panel {
   align-self: stretch;
   border-left: 1px solid var(--ink);
@@ -1616,10 +1622,17 @@ main {
 
   .question-meta {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .question-meta-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .queue-position {
     max-width: 88px;
+    margin-left: auto;
     text-align: right;
   }
 

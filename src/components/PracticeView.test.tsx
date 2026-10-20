@@ -35,6 +35,12 @@ const renderView = (overrides: Partial<Parameters<typeof PracticeView>[0]> = {})
       attemptedCount={0}
       queueMode="all"
       focusQuestion={false}
+      pastAttempt={null}
+      canGoBack={false}
+      onBack={vi.fn()}
+      initialResponse=""
+      initialElapsedMs={0}
+      onDraftChange={vi.fn()}
       onSubmit={onSubmit}
       onNext={onNext}
       onRetryDetail={vi.fn()}
@@ -67,6 +73,22 @@ describe("PracticeView keyboard flow", () => {
 
     act(() => vi.advanceTimersByTime(10_000));
     expect(screen.getByText("01:05")).toBeVisible();
+  });
+
+  it("resumes an unfinished question timer after visiting history", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-26T12:00:00.000Z"));
+    const onBack = vi.fn();
+    const { onSubmit } = renderView({ initialElapsedMs: 30_000, canGoBack: true, onBack });
+
+    act(() => vi.advanceTimersByTime(12_000));
+    expect(screen.getByText("00:42")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    expect(onBack).toHaveBeenCalledWith(42_000);
+
+    fireEvent.click(screen.getByRole("radio", { name: /4/ }));
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    expect(onSubmit).toHaveBeenCalledWith("B", 42_000);
   });
 
   it("checks on Enter, then advances on the next Enter", () => {
@@ -110,5 +132,35 @@ describe("PracticeView keyboard flow", () => {
     expect(
       screen.queryByRole("button", { name: /graphing calculator/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a past attempt read-only and can hide all answer cues", () => {
+    const { onSubmit, onNext } = renderView({
+      pastAttempt: {
+        id: "past-1", questionId: "q1", response: "A", correct: false,
+        createdAt: "2026-09-26T12:00:00.000Z", durationMs: 12_000,
+      },
+    });
+
+    expect(screen.getByRole("radio", { name: /3/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /3/ })).toBeDisabled();
+    expect(screen.getByText("Correct answer")).toBeVisible();
+    expect(screen.getByText("Your answer")).toBeVisible();
+    expect(screen.getByText("00:12")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /hide answers/i }));
+    expect(screen.getByRole("radio", { name: /3/ })).not.toBeChecked();
+    expect(screen.queryByText("Correct answer")).not.toBeInTheDocument();
+    expect(screen.queryByText("Your answer")).not.toBeInTheDocument();
+    expect(screen.queryByText(/because it is/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/accepted answer/i)).not.toBeInTheDocument();
+    expect(document.querySelector(".answer-option.is-correct, .answer-option.is-incorrect")).toBeNull();
+    pressEnter();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onNext).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /show answers/i }));
+    expect(screen.getByRole("radio", { name: /3/ })).toBeChecked();
+    expect(screen.getByText("Correct answer")).toBeVisible();
   });
 });
