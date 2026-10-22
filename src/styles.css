@@ -441,6 +441,11 @@ main {
   margin-bottom: 0;
 }
 
+.service-rich-text .rich-underline {
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
 .service-rich-text img,
 .service-rich-text svg,
 .service-rich-text table {

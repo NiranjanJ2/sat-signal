@@ -17,6 +17,22 @@ describe("RichHtml", () => {
     expect(root?.querySelector("strong")).toHaveTextContent("Second");
   });
 
+  it("preserves College Board underlines without retaining arbitrary inline styles", () => {
+    const { container } = render(
+      <RichHtml
+        className="service-rich-text"
+        html={'<p>Text 1: <span style="text-decoration: underline; position: fixed">assigning an age to the fossils is challenging</span>. <span style="text-decoration: none">Other text</span> <span style="text-decoration-line: underline">Also underlined</span> <span style="text-decoration: underline; text-decoration: none">Not underlined</span> <u>Semantic underline</u></p>'}
+      />,
+    );
+
+    expect(container.querySelector(".rich-underline")).toHaveTextContent(
+      "assigning an age to the fossils is challenging",
+    );
+    expect(container.querySelector("[style]")).toBeNull();
+    expect(container.querySelectorAll(".rich-underline")).toHaveLength(2);
+    expect(container.querySelector("u")).toHaveTextContent("Semantic underline");
+  });
+
   it("preserves semantic table structure", () => {
     const { container } = render(
       <RichHtml

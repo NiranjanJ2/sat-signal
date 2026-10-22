@@ -32,6 +32,7 @@ const sanitizerConfig: Config = {
 const mathMlNamespace = "http://www.w3.org/1998/Math/MathML";
 const svgNamespace = "http://www.w3.org/2000/svg";
 const svgPresentationAttributes = new WeakMap<Element, Map<string, string>>();
+const htmlUnderlines = new WeakSet<Element>();
 
 const svgPaintPattern =
   /^(?:none|#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8}))$/iu;
@@ -133,6 +134,19 @@ purifier.addHook("uponSanitizeAttribute", (_node, attribute) => {
     );
   }
 
+  if (attributeName === "style" && _node.namespaceURI === "http://www.w3.org/1999/xhtml") {
+    let underlined = false;
+    for (const declaration of attribute.attrValue.split(";")) {
+      const separator = declaration.indexOf(":");
+      if (separator < 0) continue;
+      const name = declaration.slice(0, separator).trim().toLowerCase();
+      if (name === "text-decoration" || name === "text-decoration-line") {
+        underlined = declaration.slice(separator + 1).trim().toLowerCase() === "underline";
+      }
+    }
+    if (underlined) htmlUnderlines.add(_node as Element);
+  }
+
   if (
     _node.namespaceURI === svgNamespace &&
     _node.nodeName.toLowerCase() === "use" &&
@@ -151,6 +165,11 @@ purifier.addHook("uponSanitizeAttribute", (_node, attribute) => {
 });
 
 purifier.addHook("afterSanitizeAttributes", (node) => {
+  if (htmlUnderlines.has(node as Element)) {
+    (node as Element).classList.add("rich-underline");
+    htmlUnderlines.delete(node as Element);
+  }
+
   const presentationAttributes = svgPresentationAttributes.get(node as Element);
   svgPresentationAttributes.delete(node as Element);
 
