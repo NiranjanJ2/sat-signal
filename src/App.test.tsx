@@ -267,6 +267,21 @@ describe("SAT practice app", () => {
     expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}").attempts).toHaveLength(1);
   });
 
+  it("skips to the next eligible question without recording an answer", async () => {
+    prepareSuccess();
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    await waitFor(() => expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole("button", { name: /next eligible question/i }));
+    expect(await screen.findByRole("heading", { name: /what is the value of x/i })).toBeVisible();
+    expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2);
+    expect(window.localStorage.getItem(PRACTICE_STORAGE_KEY)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /next eligible question/i }));
+    expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
+  });
+
   it("goes back through saved attempts without recording or changing them", async () => {
     prepareSuccess();
     render(<App />);

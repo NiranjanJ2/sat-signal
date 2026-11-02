@@ -181,6 +181,7 @@ export function PracticeView({
 
   const currentIndex = pool.findIndex((question) => question.id === currentMeta.id);
   const position = currentIndex >= 0 ? currentIndex + 1 : null;
+  const canSkip = !pastAttempt && pool.some((candidate) => candidate.id !== currentMeta.id);
 
   const detailMatches =
     detailState.status !== "idle" && detailState.questionId === currentMeta.id;
@@ -245,7 +246,7 @@ export function PracticeView({
             <p className="skill-name">{question.skill}</p>
           </div>
           <div className="question-meta-actions">
-            {!pastAttempt && pool.some((candidate) => candidate.id !== currentMeta.id) ? (
+            {canSkip ? (
               <button
                 className="button button-quiet history-button"
                 type="button"
@@ -253,6 +254,17 @@ export function PracticeView({
                 title="Pick another eligible question; this one stays in the queue, but its draft is cleared"
               >
                 ⇄ Shuffle
+              </button>
+            ) : null}
+            {canSkip ? (
+              <button
+                className="button button-quiet history-button"
+                type="button"
+                onClick={onNext}
+                aria-label="Next eligible question"
+                title="Skip ahead without answering; this question stays in the queue and its draft is cleared"
+              >
+                Next →
               </button>
             ) : null}
             {canGoBack ? (
