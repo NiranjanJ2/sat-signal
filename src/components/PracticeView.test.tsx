@@ -25,6 +25,7 @@ const question: QuestionDetail = {
 const renderView = (overrides: Partial<Parameters<typeof PracticeView>[0]> = {}) => {
   const onSubmit = vi.fn(() => true);
   const onNext = vi.fn();
+  const onShuffle = vi.fn();
   render(
     <PracticeView
       currentMeta={question}
@@ -43,12 +44,13 @@ const renderView = (overrides: Partial<Parameters<typeof PracticeView>[0]> = {})
       onDraftChange={vi.fn()}
       onSubmit={onSubmit}
       onNext={onNext}
+      onShuffle={onShuffle}
       onRetryDetail={vi.fn()}
       onPracticeAll={vi.fn()}
       {...overrides}
     />,
   );
-  return { onSubmit, onNext };
+  return { onSubmit, onNext, onShuffle };
 };
 
 const pressEnter = (target: Element = document.body) => {

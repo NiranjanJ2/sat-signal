@@ -32,6 +32,7 @@ type PracticeViewProps = {
   onSubmit: (response: string, durationMs: number) => boolean;
   onBack: (elapsedMs: number) => void;
   onNext: () => void;
+  onShuffle: () => void;
   onRetryDetail: () => void;
   onPracticeAll: () => void;
 };
@@ -64,6 +65,7 @@ export function PracticeView({
   onSubmit,
   onBack,
   onNext,
+  onShuffle,
   onRetryDetail,
   onPracticeAll,
 }: PracticeViewProps) {
@@ -243,6 +245,16 @@ export function PracticeView({
             <p className="skill-name">{question.skill}</p>
           </div>
           <div className="question-meta-actions">
+            {!pastAttempt && pool.some((candidate) => candidate.id !== currentMeta.id) ? (
+              <button
+                className="button button-quiet history-button"
+                type="button"
+                onClick={onShuffle}
+                title="Pick another eligible question; this one stays in the queue, but its draft is cleared"
+              >
+                ⇄ Shuffle
+              </button>
+            ) : null}
             {canGoBack ? (
               <button className="button button-quiet history-button" type="button" onClick={goBack}>
                 ← Back

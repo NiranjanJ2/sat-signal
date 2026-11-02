@@ -164,6 +164,7 @@ export default function App() {
     initialPracticeState,
   );
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [queueOrder, setQueueOrder] = useState<string[]>([]);
   const catalogRef = useRef(catalog);
   const filtersRef = useRef(filters);
   catalogRef.current = catalog;
@@ -355,6 +356,7 @@ export default function App() {
 
         progressGenerationRef.current = snapshot.generation;
         setCatalog(nextCatalog);
+        setQueueOrder([]);
         setPracticeState(snapshot.state);
         setCurrentQuestionId(nextPool[0]?.id ?? null);
         setHistoryAttemptId(null);
@@ -386,8 +388,13 @@ export default function App() {
     [catalog],
   );
   const pool = useMemo(
-    () => filterQuestions(catalog, filters, practiceState),
-    [catalog, filters, practiceState],
+    () => {
+      const eligible = filterQuestions(catalog, filters, practiceState);
+      if (queueOrder.length === 0) return eligible;
+      const rank = new Map(queueOrder.map((id, index) => [id, index]));
+      return eligible.sort((a, b) => (rank.get(a.id) ?? queueOrder.length) - (rank.get(b.id) ?? queueOrder.length));
+    },
+    [catalog, filters, practiceState, queueOrder],
   );
   const stats = useMemo(
     () => deriveTopicStats(catalog, practiceState.attempts),
@@ -533,6 +540,7 @@ export default function App() {
 
   const choosePoolStart = (nextFilters: Filters, state = practiceState) => {
     const nextPool = filterQuestions(catalog, nextFilters, state);
+    setQueueOrder([]);
     setHistoryAttemptId(null);
     activateQuestion(nextPool[0]);
   };
@@ -609,6 +617,18 @@ export default function App() {
       return;
     }
     activateQuestion(nextQuestionInPool(pool, currentQuestionId));
+  };
+
+  const shuffleQuestions = () => {
+    const remaining = pool.filter((question) => question.id !== currentQuestionId);
+    if (remaining.length === 0) return;
+    for (let index = remaining.length - 1; index > 0; index--) {
+      const randomIndex = Math.floor(Math.random() * (index + 1));
+      [remaining[index], remaining[randomIndex]] = [remaining[randomIndex]!, remaining[index]!];
+    }
+    const current = pool.find((question) => question.id === currentQuestionId);
+    setQueueOrder([...remaining, ...(current ? [current] : [])].map((question) => question.id));
+    activateQuestion(remaining[0]);
   };
 
   const confirmReset = async () => {
@@ -800,6 +820,7 @@ export default function App() {
               onSubmit={submitAnswer}
               onBack={previousQuestion}
               onNext={nextQuestion}
+              onShuffle={shuffleQuestions}
               onRetryDetail={() => setDetailRetry((retry) => retry + 1)}
               onPracticeAll={practiceAll}
             />

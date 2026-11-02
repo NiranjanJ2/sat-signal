@@ -249,6 +249,24 @@ describe("SAT practice app", () => {
     expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2);
   });
 
+  it("shuffles to another eligible question without recording or repeating it", async () => {
+    prepareSuccess();
+    render(<App />);
+    await screen.findByRole("heading", { name: /which choice best states/i });
+    await waitFor(() => expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole("button", { name: /shuffle/i }));
+    expect(await screen.findByRole("heading", { name: /what is the value of x/i })).toBeVisible();
+    expect(qbankMocks.fetchQuestionDetail).toHaveBeenCalledTimes(2);
+    expect(window.localStorage.getItem(PRACTICE_STORAGE_KEY)).toBeNull();
+
+    fireEvent.change(screen.getByRole("textbox", { name: /student-produced response/i }), { target: { value: "4" } });
+    fireEvent.click(screen.getByRole("button", { name: /check answer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next question/i }));
+    expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
+    expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}").attempts).toHaveLength(1);
+  });
+
   it("goes back through saved attempts without recording or changing them", async () => {
     prepareSuccess();
     render(<App />);
