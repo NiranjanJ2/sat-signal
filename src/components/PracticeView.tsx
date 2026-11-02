@@ -70,6 +70,7 @@ export function PracticeView({
   onPracticeAll,
 }: PracticeViewProps) {
   const [response, setResponse] = useState(pastAttempt?.response ?? initialResponse);
+  const [crossedOut, setCrossedOut] = useState<Set<string>>(() => new Set());
   const [submitted, setSubmitted] = useState(Boolean(pastAttempt));
   const [correct, setCorrect] = useState(pastAttempt?.correct ?? false);
   const [showAnswers, setShowAnswers] = useState(true);
@@ -321,24 +322,56 @@ export function PracticeView({
                     const isCorrectAnswer = submitted && showAnswers && gradeResponse(question, choice.label);
                     const isWrongSelection = submitted && showAnswers && response === choice.label && !isCorrectAnswer;
                     const stateClass = isCorrectAnswer ? " is-correct" : isWrongSelection ? " is-incorrect" : "";
+                    const isCrossedOut = !submitted && crossedOut.has(choice.id);
 
                     return (
-                      <label className={`answer-option${stateClass}`} key={choice.id}>
+                      <div className={`answer-option${stateClass}${isCrossedOut ? " is-crossed-out" : ""}`} key={choice.id}>
                         <input
+                          id={`answer-${question.id}-${choice.id}`}
                           type="radio"
                           name={`answer-${question.id}`}
                           value={choice.label}
                           checked={showAnswers && response === choice.label}
                           onChange={() => {
+                            setCrossedOut((previous) => {
+                              const next = new Set(previous);
+                              next.delete(choice.id);
+                              return next;
+                            });
                             setResponse(choice.label);
                             onDraftChange(choice.label);
                           }}
                         />
-                        <span className="answer-letter" aria-hidden="true">{choice.label}</span>
-                        <RichHtml html={choice.html} className="answer-copy service-rich-text" />
+                        <label className="answer-choice" htmlFor={`answer-${question.id}-${choice.id}`}>
+                          <span className="answer-letter" aria-hidden="true">{choice.label}</span>
+                          <RichHtml html={choice.html} className="answer-copy service-rich-text" />
+                        </label>
                         {isCorrectAnswer ? <span className="answer-state">Correct answer</span> : null}
                         {isWrongSelection ? <span className="answer-state">Your answer</span> : null}
-                      </label>
+                        {!submitted ? (
+                          <button
+                            className="answer-strike"
+                            type="button"
+                            aria-label={`${isCrossedOut ? "Restore" : "Cross out"} choice ${choice.label}`}
+                            aria-pressed={isCrossedOut}
+                            title={`${isCrossedOut ? "Restore" : "Cross out"} choice ${choice.label}`}
+                            onClick={() => {
+                              setCrossedOut((previous) => {
+                                const next = new Set(previous);
+                                if (next.has(choice.id)) next.delete(choice.id);
+                                else next.add(choice.id);
+                                return next;
+                              });
+                              if (response === choice.label) {
+                                setResponse("");
+                                onDraftChange("");
+                              }
+                            }}
+                          >
+                            <span aria-hidden="true">ABC</span>
+                          </button>
+                        ) : null}
+                      </div>
                     );
                   })}
                 </fieldset>

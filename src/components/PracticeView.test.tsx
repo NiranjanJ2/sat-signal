@@ -132,6 +132,25 @@ describe("PracticeView keyboard flow", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it("crosses out and restores choices without submitting or keeping a crossed-out selection", () => {
+    const { onSubmit } = renderView();
+    const choice = screen.getByRole("radio", { name: /3/ });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cross out choice A" }));
+    expect(choice).not.toBeChecked();
+    expect(choice.closest(".answer-option")).toHaveClass("is-crossed-out");
+    expect(screen.getByRole("button", { name: "Restore choice A" })).toHaveAttribute("aria-pressed", "true");
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.click(choice);
+    expect(choice).toBeChecked();
+    expect(choice.closest(".answer-option")).not.toHaveClass("is-crossed-out");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cross out choice A" }));
+    expect(choice).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /check answer/i })).toBeDisabled();
+  });
+
   it("leaves Enter alone inside the calculator panel", () => {
     const { onSubmit } = renderView();
     fireEvent.click(screen.getByRole("radio", { name: /4/ }));
