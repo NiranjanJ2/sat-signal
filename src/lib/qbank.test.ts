@@ -383,6 +383,28 @@ describe("fetchQuestionDetail", () => {
     );
   });
 
+  it("identifies legacy SPR questions with no answer key as ungradable", async () => {
+    const meta: QuestionMeta = { ...standardMeta, id: "ibn:070615-DC", externalId: undefined, ibn: "070615-DC" };
+    const fetchImpl = vi.fn(async () => response([{
+      prompt: "<p>Solve for x.</p>",
+      answer: { style: "SPR", rationale: "<p>The answer is 3.</p>" },
+    }])) as unknown as typeof fetch;
+
+    await expect(fetchQuestionDetail(meta, new AbortController().signal, fetchImpl))
+      .rejects.toMatchObject({ code: "ungradable" });
+  });
+
+  it("identifies a blank legacy multiple-choice key as ungradable", async () => {
+    const meta: QuestionMeta = { ...standardMeta, id: "ibn:blank-key", externalId: undefined, ibn: "blank-key" };
+    const fetchImpl = vi.fn(async () => response([{
+      prompt: "<p>Choose one.</p>",
+      answer: { style: "Multiple Choice", correct_choice: "  ", rationale: "<p>Explanation.</p>" },
+    }])) as unknown as typeof fetch;
+
+    await expect(fetchQuestionDetail(meta, new AbortController().signal, fetchImpl))
+      .rejects.toMatchObject({ code: "ungradable" });
+  });
+
   it("rejects a malformed standard detail", async () => {
     const fetchImpl = vi.fn(async () =>
       response({ ...standardPayload, answerOptions: "not-an-array" }),

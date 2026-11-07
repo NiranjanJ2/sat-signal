@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { QBankError } from "./lib/qbank";
 import { PRACTICE_STORAGE_KEY } from "./lib/storage";
 import { hydratePracticeStateDocument } from "./lib/storage";
 import type { QuestionDetail, QuestionMeta } from "./types";
@@ -265,6 +266,50 @@ describe("SAT practice app", () => {
     fireEvent.click(screen.getByRole("button", { name: /next question/i }));
     expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
     expect(JSON.parse(window.localStorage.getItem(PRACTICE_STORAGE_KEY) ?? "{}").attempts).toHaveLength(1);
+  });
+
+  it("skips an ungradable released question without recording an attempt", async () => {
+    qbankMocks.loadCatalog.mockResolvedValue(catalog);
+    qbankMocks.fetchQuestionDetail.mockImplementation((meta: QuestionMeta) =>
+      meta.id === "rw-1"
+        ? Promise.reject(new QBankError("ungradable", "No answer key"))
+        : Promise.resolve(details[meta.id]),
+    );
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: /what is the value of x/i })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: /question did not arrive/i })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem(PRACTICE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("removes an ungradable lookahead before it can be shuffled into", async () => {
+    qbankMocks.loadCatalog.mockResolvedValue(catalog);
+    qbankMocks.fetchQuestionDetail.mockImplementation((meta: QuestionMeta) =>
+      meta.id === "math-1"
+        ? Promise.reject(new QBankError("ungradable", "No answer key"))
+        : Promise.resolve(details[meta.id]),
+    );
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /shuffle/i })).not.toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: /question did not arrive/i })).not.toBeInTheDocument();
+  });
+
+  it("retries a transient current-question failure once", async () => {
+    let readingRequests = 0;
+    qbankMocks.loadCatalog.mockResolvedValue(catalog);
+    qbankMocks.fetchQuestionDetail.mockImplementation((meta: QuestionMeta) => {
+      if (meta.id !== "rw-1") return Promise.resolve(details[meta.id]);
+      readingRequests += 1;
+      return readingRequests === 1
+        ? Promise.reject(new QBankError("network", "Temporary failure"))
+        : Promise.resolve(details[meta.id]);
+    });
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: /which choice best states/i })).toBeVisible();
+    expect(readingRequests).toBe(2);
   });
 
   it("skips to the next eligible question without recording an answer", async () => {

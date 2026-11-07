@@ -34,6 +34,7 @@ const renderView = (overrides: Partial<Parameters<typeof PracticeView>[0]> = {})
       stats={[]}
       unresolvedCount={0}
       attemptedCount={0}
+      ungradableCount={0}
       queueMode="all"
       focusQuestion={false}
       pastAttempt={null}

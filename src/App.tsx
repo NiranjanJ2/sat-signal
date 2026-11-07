@@ -6,6 +6,7 @@ import { ReviewView } from "./components/ReviewView";
 import { isCloudConfigured } from "./lib/cloud-config";
 import type { Account } from "./lib/cloud";
 import {
+  QBankError,
   fetchQuestionDetail,
   gradeResponse,
   loadCatalog,
@@ -86,6 +87,11 @@ const isAbortError = (error: unknown): boolean =>
   error !== null &&
   "name" in error &&
   error.name === "AbortError";
+
+const isRetryableDetailError = (error: unknown): boolean =>
+  error instanceof QBankError &&
+  (error.code === "network" || (error.code === "http" &&
+    (error.status === 429 || (error.status !== undefined && error.status >= 500))));
 
 const rememberQuestionDetail = (
   cache: Map<string, QuestionDetail>,
@@ -183,6 +189,7 @@ export default function App() {
   const [questionEpoch, setQuestionEpoch] = useState(0);
   const [detailRetry, setDetailRetry] = useState(0);
   const [detailState, setDetailState] = useState<DetailState>({ status: "idle" });
+  const [ungradableIds, setUngradableIds] = useState<Set<string>>(() => new Set());
   const [resetOpen, setResetOpen] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetSaving, setResetSaving] = useState(false);
@@ -389,12 +396,13 @@ export default function App() {
   );
   const pool = useMemo(
     () => {
-      const eligible = filterQuestions(catalog, filters, practiceState);
+      const eligible = filterQuestions(catalog, filters, practiceState)
+        .filter((question) => !ungradableIds.has(question.id));
       if (queueOrder.length === 0) return eligible;
       const rank = new Map(queueOrder.map((id, index) => [id, index]));
       return eligible.sort((a, b) => (rank.get(a.id) ?? queueOrder.length) - (rank.get(b.id) ?? queueOrder.length));
     },
-    [catalog, filters, practiceState, queueOrder],
+    [catalog, filters, practiceState, queueOrder, ungradableIds],
   );
   const stats = useMemo(
     () => deriveTopicStats(catalog, practiceState.attempts),
@@ -407,6 +415,10 @@ export default function App() {
     ? practiceState.attempts.findIndex((attempt) => attempt.id === historyAttemptId)
     : -1;
   const pastAttempt = historyIndex >= 0 ? practiceState.attempts[historyIndex] ?? null : null;
+  const pastAttemptRef = useRef(pastAttempt);
+  const poolRef = useRef(pool);
+  pastAttemptRef.current = pastAttempt;
+  poolRef.current = pool;
   const currentMeta = pastAttempt
     ? questionById.get(pastAttempt.questionId) ?? null
     : liveMeta;
@@ -438,7 +450,18 @@ export default function App() {
     let active = true;
     setDetailState({ status: "loading", questionId: meta.id });
 
-    void requestQuestionDetail(meta)
+    const loadCurrentDetail = async () => {
+      try {
+        return await requestQuestionDetail(meta);
+      } catch (error) {
+        if (!active || !isRetryableDetailError(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        if (!active) throw error;
+        return requestQuestionDetail(meta);
+      }
+    };
+
+    void loadCurrentDetail()
       .then((question) => {
         if (
           !active ||
@@ -450,6 +473,15 @@ export default function App() {
         setDetailState({ status: "ready", questionId: meta.id, question });
       })
       .catch((error: unknown) => {
+        if (active && error instanceof QBankError && error.code === "ungradable" && !pastAttemptRef.current) {
+          setUngradableIds((previous) => new Set(previous).add(meta.id));
+          const next = poolRef.current.length > 1 ? nextQuestionInPool(poolRef.current, meta.id) : undefined;
+          setCurrentQuestionId(next?.id ?? null);
+          setDraftResponse("");
+          setDraftElapsedMs(0);
+          setQuestionEpoch((epoch) => epoch + 1);
+          return;
+        }
         if (
           active &&
           !isAbortError(error) &&
@@ -486,7 +518,10 @@ export default function App() {
 
     void requestQuestionDetail(currentMeta).catch(() => {});
     if (nextMeta && nextMeta.id !== currentMeta.id) {
-      void requestQuestionDetail(nextMeta).catch(() => {
+      void requestQuestionDetail(nextMeta).catch((error: unknown) => {
+        if (error instanceof QBankError && error.code === "ungradable") {
+          setUngradableIds((previous) => new Set(previous).add(nextMeta.id));
+        }
         // Lookahead is opportunistic; the current-detail path retries on demand.
       });
     }
@@ -815,6 +850,7 @@ export default function App() {
               stats={stats}
               unresolvedCount={practiceState.unresolvedIds.length}
               attemptedCount={practiceState.attempts.length}
+              ungradableCount={filterQuestions(catalog, filters, practiceState).filter((question) => ungradableIds.has(question.id)).length}
               queueMode={filters.mode}
               focusQuestion={questionEpoch > 1}
               onSubmit={submitAnswer}

@@ -27,6 +27,7 @@ type PracticeViewProps = {
   stats: readonly TopicStat[];
   unresolvedCount: number;
   attemptedCount: number;
+  ungradableCount: number;
   queueMode: Filters["mode"];
   focusQuestion: boolean;
   onSubmit: (response: string, durationMs: number) => boolean;
@@ -60,6 +61,7 @@ export function PracticeView({
   stats,
   unresolvedCount,
   attemptedCount,
+  ungradableCount,
   queueMode,
   focusQuestion,
   onSubmit,
@@ -163,12 +165,16 @@ export function PracticeView({
         <div className="empty-mark" aria-hidden="true">✓</div>
         <p className="section-index">No question waiting</p>
         <h1 id="empty-pool-title">
-          {retryMode
+          {ungradableCount > 0
+            ? "No loadable questions remain in this filter."
+            : retryMode
             ? "The retry queue is clear."
             : "You have seen every question in this filter."}
         </h1>
         <p>
-          {retryMode
+          {ungradableCount > 0
+            ? "Some released items have no usable answer key. Your progress was not changed; try another filter."
+            : retryMode
             ? "You have resolved every miss in this filter. Return to the unseen bank to build another signal."
             : "Change the filters, practice unresolved misses, or reset progress to start the bank over."}
         </p>

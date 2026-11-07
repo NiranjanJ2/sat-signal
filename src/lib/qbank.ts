@@ -10,7 +10,7 @@ const API_BASE =
   "https://qbank-api.collegeboard.org/msreportingquestionbank-prod";
 const LEGACY_BASE = "https://saic.collegeboard.org/disclosed";
 
-export type QBankErrorCode = "network" | "http" | "invalid-response";
+export type QBankErrorCode = "network" | "http" | "invalid-response" | "ungradable";
 
 export class QBankError extends Error {
   override readonly name = "QBankError";
@@ -331,7 +331,7 @@ function parseStandardDetail(
   }
 
   if (correctAnswers.length === 0) {
-    throw invalidResponse("standard detail has no usable correct answer");
+    throw new QBankError("ungradable", `Question ${meta.id} has no usable answer key`);
   }
 
   return {
@@ -401,10 +401,10 @@ function parseLegacyDetail(
     answer.rationale,
     "legacy detail.answer.rationale",
   );
-  const correctChoice = requireNonemptyString(
-    answer.correct_choice,
-    "legacy detail.answer.correct_choice",
-  );
+  if (typeof answer.correct_choice !== "string" || !answer.correct_choice.trim()) {
+    throw new QBankError("ungradable", `Legacy question ${meta.id} has no answer key`);
+  }
+  const correctChoice = requireNonemptyString(answer.correct_choice, "legacy detail.answer.correct_choice");
 
   let choices: QuestionChoice[] = [];
   if (kind === "multiple-choice") {
