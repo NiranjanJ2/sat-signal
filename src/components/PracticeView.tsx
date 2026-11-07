@@ -329,24 +329,31 @@ export function PracticeView({
                     const isWrongSelection = submitted && showAnswers && response === choice.label && !isCorrectAnswer;
                     const stateClass = isCorrectAnswer ? " is-correct" : isWrongSelection ? " is-incorrect" : "";
                     const isCrossedOut = !submitted && crossedOut.has(choice.id);
+                    const selectChoice = () => {
+                      setCrossedOut((previous) => {
+                        const next = new Set(previous);
+                        next.delete(choice.id);
+                        return next;
+                      });
+                      setResponse(choice.label);
+                      onDraftChange(choice.label);
+                    };
 
                     return (
-                      <div className={`answer-option${stateClass}${isCrossedOut ? " is-crossed-out" : ""}`} key={choice.id}>
+                      <div
+                        className={`answer-option${stateClass}${isCrossedOut ? " is-crossed-out" : ""}`}
+                        key={choice.id}
+                        onClick={(event) => {
+                          if (!submitted && event.target === event.currentTarget) selectChoice();
+                        }}
+                      >
                         <input
                           id={`answer-${question.id}-${choice.id}`}
                           type="radio"
                           name={`answer-${question.id}`}
                           value={choice.label}
                           checked={showAnswers && response === choice.label}
-                          onChange={() => {
-                            setCrossedOut((previous) => {
-                              const next = new Set(previous);
-                              next.delete(choice.id);
-                              return next;
-                            });
-                            setResponse(choice.label);
-                            onDraftChange(choice.label);
-                          }}
+                          onChange={selectChoice}
                         />
                         <label className="answer-choice" htmlFor={`answer-${question.id}-${choice.id}`}>
                           <span className="answer-letter" aria-hidden="true">{choice.label}</span>

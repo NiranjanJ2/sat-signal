@@ -523,6 +523,8 @@ main {
   background: var(--paper);
 }
 
+.answer-option:not(:has(input:disabled)) { cursor: pointer; }
+
 .answer-option:has(input:checked) {
   background: var(--blue-pale);
   transform: translateX(4px);

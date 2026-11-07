@@ -152,6 +152,19 @@ describe("PracticeView keyboard flow", () => {
     expect(screen.getByRole("button", { name: /check answer/i })).toBeDisabled();
   });
 
+  it("selects an answer from the empty middle of its row without triggering cross-out", () => {
+    const onDraftChange = vi.fn();
+    renderView({ onDraftChange });
+    const choice = screen.getByRole("radio", { name: /4/ });
+    const row = choice.closest(".answer-option");
+    expect(row).not.toBeNull();
+
+    fireEvent.click(row!);
+    expect(choice).toBeChecked();
+    expect(onDraftChange).toHaveBeenCalledWith("B");
+    expect(screen.getByRole("button", { name: "Cross out choice B" })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("leaves Enter alone inside the calculator panel", () => {
     const { onSubmit } = renderView();
     fireEvent.click(screen.getByRole("radio", { name: /4/ }));
@@ -187,6 +200,8 @@ describe("PracticeView keyboard flow", () => {
 
     expect(screen.getByRole("radio", { name: /3/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /3/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /4/ }).closest(".answer-option")!);
+    expect(screen.getByRole("radio", { name: /3/ })).toBeChecked();
     expect(screen.getByText("Correct answer")).toBeVisible();
     expect(screen.getByText("Your answer")).toBeVisible();
     expect(screen.getByText("00:12")).toBeVisible();
